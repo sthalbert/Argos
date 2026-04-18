@@ -1,0 +1,96 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argosd
+  namespace: argos-system
+  labels:
+    app.kubernetes.io/name: argos
+    app.kubernetes.io/component: daemon
+spec:
+  # Single-writer assumption from ADR-0005: one argosd owns the collector
+  # goroutines. Running two replicas would double-ingest the same cluster
+  # state. Scaling out happens via the agent-per-cluster path (future ADR).
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argos
+      app.kubernetes.io/component: daemon
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: argos
+        app.kubernetes.io/component: daemon
+    spec:
+      serviceAccountName: argos
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532   # matches distroless:nonroot
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: argosd
+          # The Dockerfile PR builds but doesn't publish. For a first real-
+          # cluster smoke test:
+          #   1. `make docker-build` -> produces argos:dev locally
+          #   2. Load into the target cluster (e.g. `kind load docker-image
+          #      argos:dev` or `minikube image load argos:dev`)
+          #   3. Replace the image below with `argos:dev` or your own
+          #      registry's tag
+          image: ghcr.io/sthalbert/argos:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            # Register *this* cluster under this name. The Cluster row must
+            # be pre-POSTed to /v1/clusters; see README.
+            - name: ARGOS_CLUSTER_NAME
+              value: in-cluster
+            # Empty ARGOS_KUBECONFIG -> use the pod's in-cluster
+            # ServiceAccount credentials. Bound to the ClusterRole in
+            # rbac.yaml.
+            - name: ARGOS_KUBECONFIG
+              value: ""
+            - name: ARGOS_COLLECTOR_ENABLED
+              value: "true"
+            - name: ARGOS_COLLECTOR_RECONCILE
+              value: "true"
+            - name: ARGOS_COLLECTOR_INTERVAL
+              value: "5m"
+          envFrom:
+            - secretRef:
+                name: argos-credentials
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
