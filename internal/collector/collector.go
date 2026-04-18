@@ -32,6 +32,18 @@ type NamespaceInfo struct {
 	Labels map[string]string
 }
 
+// PodInfo is the subset of a Kubernetes Pod the collector consumes. Namespace
+// is the K8s namespace name, which the collector resolves against the CMDB's
+// namespace UUID before writing.
+type PodInfo struct {
+	Name      string
+	Namespace string
+	Phase     string
+	NodeName  string
+	PodIP     string
+	Labels    map[string]string
+}
+
 // VersionFetcher returns the Kubernetes API server version for the cluster
 // it was configured against (typically via kubeconfig or in-cluster config).
 type VersionFetcher interface {
@@ -48,11 +60,18 @@ type NamespaceLister interface {
 	ListNamespaces(ctx context.Context) ([]NamespaceInfo, error)
 }
 
+// PodLister returns every Pod visible to the configured kubeconfig, across
+// all namespaces.
+type PodLister interface {
+	ListPods(ctx context.Context) ([]PodInfo, error)
+}
+
 // KubeSource is the composite contract the Collector consumes.
 type KubeSource interface {
 	VersionFetcher
 	NodeLister
 	NamespaceLister
+	PodLister
 }
 
 // cmdbStore is the subset of api.Store the collector consumes.
@@ -63,6 +82,8 @@ type cmdbStore interface {
 	DeleteNodesNotIn(ctx context.Context, clusterID uuid.UUID, keepNames []string) (int64, error)
 	UpsertNamespace(ctx context.Context, in api.NamespaceCreate) (api.Namespace, error)
 	DeleteNamespacesNotIn(ctx context.Context, clusterID uuid.UUID, keepNames []string) (int64, error)
+	UpsertPod(ctx context.Context, in api.PodCreate) (api.Pod, error)
+	DeletePodsNotIn(ctx context.Context, namespaceID uuid.UUID, keepNames []string) (int64, error)
 }
 
 // Collector polls a KubeSource and reconciles the results into the CMDB
@@ -149,7 +170,10 @@ func (c *Collector) poll(parent context.Context) {
 	}
 
 	c.ingestNodes(ctx, *cluster.Id)
-	c.ingestNamespaces(ctx, *cluster.Id)
+	namespaceIDsByName := c.ingestNamespaces(ctx, *cluster.Id)
+	if namespaceIDsByName != nil {
+		c.ingestPods(ctx, namespaceIDsByName)
+	}
 }
 
 // ingestNodes lists nodes from the kube source and upserts each into the
@@ -201,16 +225,19 @@ func (c *Collector) ingestNodes(ctx context.Context, clusterID uuid.UUID) {
 // ingestNamespaces lists namespaces from the kube source and upserts each
 // into the store under the given cluster. When reconcile is enabled,
 // namespaces in the CMDB that no longer appear in the live listing are
-// deleted so stored state matches the cluster.
-func (c *Collector) ingestNamespaces(ctx context.Context, clusterID uuid.UUID) {
+// deleted so stored state matches the cluster. Returns a name -> id map the
+// pod-ingestion pass uses to resolve each pod's FK, or nil on list failure
+// (signal to the caller to skip pod ingestion).
+func (c *Collector) ingestNamespaces(ctx context.Context, clusterID uuid.UUID) map[string]uuid.UUID {
 	namespaces, err := c.source.ListNamespaces(ctx)
 	if err != nil {
 		slog.Warn("collector: list namespaces failed", "error", err, "cluster_name", c.clusterName)
-		return
+		return nil
 	}
 
 	var upserted, failed int
 	keepNames := make([]string, 0, len(namespaces))
+	idsByName := make(map[string]uuid.UUID, len(namespaces))
 	for _, ns := range namespaces {
 		in := api.NamespaceCreate{
 			ClusterId: clusterID,
@@ -221,13 +248,17 @@ func (c *Collector) ingestNamespaces(ctx context.Context, clusterID uuid.UUID) {
 			labels := ns.Labels
 			in.Labels = &labels
 		}
-		if _, err := c.store.UpsertNamespace(ctx, in); err != nil {
+		stored, err := c.store.UpsertNamespace(ctx, in)
+		if err != nil {
 			slog.Warn("collector: upsert namespace failed", "error", err, "namespace", ns.Name, "cluster_name", c.clusterName)
 			failed++
 			continue
 		}
 		upserted++
 		keepNames = append(keepNames, ns.Name)
+		if stored.Id != nil {
+			idsByName[ns.Name] = *stored.Id
+		}
 	}
 
 	var reconciled int64
@@ -239,6 +270,65 @@ func (c *Collector) ingestNamespaces(ctx context.Context, clusterID uuid.UUID) {
 		reconciled = n
 	}
 	slog.Info("collector: ingested namespaces", "upserted", upserted, "failed", failed, "reconciled_deleted", reconciled, "cluster_name", c.clusterName)
+	return idsByName
+}
+
+// ingestPods lists pods from the kube source, resolves each pod's parent
+// namespace via namespaceIDsByName, and upserts it. Pods whose namespace
+// isn't in the live map (either the namespace disappeared this tick or the
+// lookup never ran) are skipped rather than written against a guessed
+// parent. When reconcile is enabled, every live namespace is reconciled
+// independently so empty namespaces have their stale pods cleared too.
+func (c *Collector) ingestPods(ctx context.Context, namespaceIDsByName map[string]uuid.UUID) {
+	pods, err := c.source.ListPods(ctx)
+	if err != nil {
+		slog.Warn("collector: list pods failed", "error", err, "cluster_name", c.clusterName)
+		return
+	}
+
+	var upserted, failed, skipped int
+	keepByNS := make(map[uuid.UUID][]string)
+	for _, p := range pods {
+		nsID, ok := namespaceIDsByName[p.Namespace]
+		if !ok {
+			slog.Warn("collector: pod in unknown namespace; skipping", "pod", p.Name, "namespace", p.Namespace, "cluster_name", c.clusterName)
+			skipped++
+			continue
+		}
+		in := api.PodCreate{
+			NamespaceId: nsID,
+			Name:        p.Name,
+			Phase:       ptrIfNonEmpty(p.Phase),
+			NodeName:    ptrIfNonEmpty(p.NodeName),
+			PodIp:       ptrIfNonEmpty(p.PodIP),
+		}
+		if len(p.Labels) > 0 {
+			labels := p.Labels
+			in.Labels = &labels
+		}
+		if _, err := c.store.UpsertPod(ctx, in); err != nil {
+			slog.Warn("collector: upsert pod failed", "error", err, "pod", p.Name, "namespace", p.Namespace, "cluster_name", c.clusterName)
+			failed++
+			continue
+		}
+		upserted++
+		keepByNS[nsID] = append(keepByNS[nsID], p.Name)
+	}
+
+	var reconciled int64
+	if c.reconcile {
+		// Reconcile every live namespace, including ones with zero pods this
+		// tick, so emptied namespaces see their stored pods removed.
+		for _, nsID := range namespaceIDsByName {
+			n, err := c.store.DeletePodsNotIn(ctx, nsID, keepByNS[nsID])
+			if err != nil {
+				slog.Error("collector: reconcile pods failed", "error", err, "namespace_id", nsID, "cluster_name", c.clusterName)
+				continue
+			}
+			reconciled += n
+		}
+	}
+	slog.Info("collector: ingested pods", "upserted", upserted, "failed", failed, "skipped", skipped, "reconciled_deleted", reconciled, "cluster_name", c.clusterName)
 }
 
 func ptrIfNonEmpty(s string) *string {
