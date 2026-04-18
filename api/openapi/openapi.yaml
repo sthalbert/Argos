@@ -1573,6 +1573,18 @@ components:
             Opaque cursor to pass as `?cursor=` to fetch the next page.
             Absent or null when no more pages remain.
 
+    ContainerList:
+      type: array
+      description: |
+        Containers associated with the resource. For Pods this reflects the
+        live runtime (name, image, image_id from containerStatuses, init
+        flag); for Workloads it's the pod template's declared containers
+        (name, image, init). Opaque in v1: each entry's shape is additive,
+        so new collector-extracted fields don't require a spec bump.
+      items:
+        type: object
+        additionalProperties: true
+
     PodMutable:
       description: Fields on a Pod that clients may set and later update.
       type: object
@@ -1593,6 +1605,8 @@ components:
           description: |
             Pod IP address (IPv4 or IPv6). Informational; not validated as an
             IP literal.
+        containers:
+          $ref: '#/components/schemas/ContainerList'
         labels:
           type: object
           description: Arbitrary user-supplied string key/value labels.
@@ -1703,6 +1717,8 @@ components:
           type: integer
           minimum: 0
           description: Observed ready replica count. Nullable until first status update.
+        containers:
+          $ref: '#/components/schemas/ContainerList'
         labels:
           type: object
           description: Arbitrary user-supplied string key/value labels.

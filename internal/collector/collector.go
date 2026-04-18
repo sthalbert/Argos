@@ -36,12 +36,13 @@ type NamespaceInfo struct {
 // is the K8s namespace name, which the collector resolves against the CMDB's
 // namespace UUID before writing.
 type PodInfo struct {
-	Name      string
-	Namespace string
-	Phase     string
-	NodeName  string
-	PodIP     string
-	Labels    map[string]string
+	Name       string
+	Namespace  string
+	Phase      string
+	NodeName   string
+	PodIP      string
+	Containers []map[string]interface{}
+	Labels     map[string]string
 }
 
 // WorkloadInfo is the subset of a Kubernetes workload controller (Deployment /
@@ -53,6 +54,7 @@ type WorkloadInfo struct {
 	Kind          api.WorkloadKind
 	Replicas      *int
 	ReadyReplicas *int
+	Containers    []map[string]interface{}
 	Labels        map[string]string
 }
 
@@ -367,6 +369,10 @@ func (c *Collector) ingestPods(ctx context.Context, namespaceIDsByName map[strin
 			NodeName:    ptrIfNonEmpty(p.NodeName),
 			PodIp:       ptrIfNonEmpty(p.PodIP),
 		}
+		if len(p.Containers) > 0 {
+			cs := api.ContainerList(p.Containers)
+			in.Containers = &cs
+		}
 		if len(p.Labels) > 0 {
 			labels := p.Labels
 			in.Labels = &labels
@@ -425,6 +431,10 @@ func (c *Collector) ingestWorkloads(ctx context.Context, namespaceIDsByName map[
 			Name:          w.Name,
 			Replicas:      w.Replicas,
 			ReadyReplicas: w.ReadyReplicas,
+		}
+		if len(w.Containers) > 0 {
+			cs := api.ContainerList(w.Containers)
+			in.Containers = &cs
 		}
 		if len(w.Labels) > 0 {
 			labels := w.Labels

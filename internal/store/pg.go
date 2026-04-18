@@ -735,16 +735,20 @@ func (p *PG) CreatePod(ctx context.Context, in api.PodCreate) (api.Pod, error) {
 	if err != nil {
 		return api.Pod{}, err
 	}
+	containersJSON, err := marshalPorts(in.Containers)
+	if err != nil {
+		return api.Pod{}, err
+	}
 
 	const q = `
 		INSERT INTO pods (
 			id, namespace_id, name, phase, node_name, pod_ip,
-			labels, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+			containers, labels, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
 	`
 	_, err = p.pool.Exec(ctx, q,
 		id, in.NamespaceId, in.Name, in.Phase, in.NodeName, in.PodIp,
-		labelsJSON, now,
+		containersJSON, labelsJSON, now,
 	)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -766,6 +770,7 @@ func (p *PG) CreatePod(ctx context.Context, in api.PodCreate) (api.Pod, error) {
 		Phase:       in.Phase,
 		NodeName:    in.NodeName,
 		PodIp:       in.PodIp,
+		Containers:  in.Containers,
 		Labels:      in.Labels,
 		CreatedAt:   &now,
 		UpdatedAt:   &now,
@@ -776,7 +781,7 @@ func (p *PG) CreatePod(ctx context.Context, in api.PodCreate) (api.Pod, error) {
 func (p *PG) GetPod(ctx context.Context, id uuid.UUID) (api.Pod, error) {
 	const q = `
 		SELECT id, namespace_id, name, phase, node_name, pod_ip,
-		       labels, created_at, updated_at
+		       containers, labels, created_at, updated_at
 		FROM pods
 		WHERE id = $1
 	`
@@ -802,7 +807,7 @@ func (p *PG) ListPods(ctx context.Context, namespaceID *uuid.UUID, limit int, cu
 
 	sb := strings.Builder{}
 	sb.WriteString(`SELECT id, namespace_id, name, phase, node_name, pod_ip,
-	                       labels, created_at, updated_at
+	                       containers, labels, created_at, updated_at
 	                FROM pods`)
 	args := make([]any, 0, 4)
 	conds := make([]string, 0, 2)
@@ -878,6 +883,13 @@ func (p *PG) UpdatePod(ctx context.Context, id uuid.UUID, in api.PodUpdate) (api
 	if in.PodIp != nil {
 		appendSet("pod_ip", *in.PodIp)
 	}
+	if in.Containers != nil {
+		b, err := marshalPorts(in.Containers)
+		if err != nil {
+			return api.Pod{}, err
+		}
+		appendSet("containers", b)
+	}
 	if in.Labels != nil {
 		b, err := marshalLabels(in.Labels)
 		if err != nil {
@@ -920,24 +932,29 @@ func (p *PG) UpsertPod(ctx context.Context, in api.PodCreate) (api.Pod, error) {
 	if err != nil {
 		return api.Pod{}, err
 	}
+	containersJSON, err := marshalPorts(in.Containers)
+	if err != nil {
+		return api.Pod{}, err
+	}
 
 	const q = `
 		INSERT INTO pods (
 			id, namespace_id, name, phase, node_name, pod_ip,
-			labels, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+			containers, labels, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
 		ON CONFLICT (namespace_id, name) DO UPDATE SET
 			phase      = EXCLUDED.phase,
 			node_name  = EXCLUDED.node_name,
 			pod_ip     = EXCLUDED.pod_ip,
+			containers = EXCLUDED.containers,
 			labels     = EXCLUDED.labels,
 			updated_at = EXCLUDED.updated_at
 		RETURNING id, namespace_id, name, phase, node_name, pod_ip,
-		          labels, created_at, updated_at
+		          containers, labels, created_at, updated_at
 	`
 	row := p.pool.QueryRow(ctx, q,
 		id, in.NamespaceId, in.Name, in.Phase, in.NodeName, in.PodIp,
-		labelsJSON, now,
+		containersJSON, labelsJSON, now,
 	)
 	pod, err := scanPod(row)
 	if err != nil {
@@ -978,16 +995,20 @@ func (p *PG) CreateWorkload(ctx context.Context, in api.WorkloadCreate) (api.Wor
 	if err != nil {
 		return api.Workload{}, err
 	}
+	containersJSON, err := marshalPorts(in.Containers)
+	if err != nil {
+		return api.Workload{}, err
+	}
 
 	const q = `
 		INSERT INTO workloads (
 			id, namespace_id, kind, name, replicas, ready_replicas,
-			labels, spec, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+			containers, labels, spec, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
 	`
 	_, err = p.pool.Exec(ctx, q,
 		id, in.NamespaceId, string(in.Kind), in.Name, in.Replicas, in.ReadyReplicas,
-		labelsJSON, specJSON, now,
+		containersJSON, labelsJSON, specJSON, now,
 	)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -1009,6 +1030,7 @@ func (p *PG) CreateWorkload(ctx context.Context, in api.WorkloadCreate) (api.Wor
 		Name:          in.Name,
 		Replicas:      in.Replicas,
 		ReadyReplicas: in.ReadyReplicas,
+		Containers:    in.Containers,
 		Labels:        in.Labels,
 		Spec:          in.Spec,
 		CreatedAt:     &now,
@@ -1020,7 +1042,7 @@ func (p *PG) CreateWorkload(ctx context.Context, in api.WorkloadCreate) (api.Wor
 func (p *PG) GetWorkload(ctx context.Context, id uuid.UUID) (api.Workload, error) {
 	const q = `
 		SELECT id, namespace_id, kind, name, replicas, ready_replicas,
-		       labels, spec, created_at, updated_at
+		       containers, labels, spec, created_at, updated_at
 		FROM workloads
 		WHERE id = $1
 	`
@@ -1047,7 +1069,7 @@ func (p *PG) ListWorkloads(ctx context.Context, namespaceID *uuid.UUID, kind *ap
 
 	sb := strings.Builder{}
 	sb.WriteString(`SELECT id, namespace_id, kind, name, replicas, ready_replicas,
-	                       labels, spec, created_at, updated_at
+	                       containers, labels, spec, created_at, updated_at
 	                FROM workloads`)
 	args := make([]any, 0, 5)
 	conds := make([]string, 0, 3)
@@ -1124,6 +1146,13 @@ func (p *PG) UpdateWorkload(ctx context.Context, id uuid.UUID, in api.WorkloadUp
 	if in.ReadyReplicas != nil {
 		appendSet("ready_replicas", *in.ReadyReplicas)
 	}
+	if in.Containers != nil {
+		b, err := marshalPorts(in.Containers)
+		if err != nil {
+			return api.Workload{}, err
+		}
+		appendSet("containers", b)
+	}
 	if in.Labels != nil {
 		b, err := marshalLabels(in.Labels)
 		if err != nil {
@@ -1177,24 +1206,29 @@ func (p *PG) UpsertWorkload(ctx context.Context, in api.WorkloadCreate) (api.Wor
 	if err != nil {
 		return api.Workload{}, err
 	}
+	containersJSON, err := marshalPorts(in.Containers)
+	if err != nil {
+		return api.Workload{}, err
+	}
 
 	const q = `
 		INSERT INTO workloads (
 			id, namespace_id, kind, name, replicas, ready_replicas,
-			labels, spec, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+			containers, labels, spec, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
 		ON CONFLICT (namespace_id, kind, name) DO UPDATE SET
 			replicas       = EXCLUDED.replicas,
 			ready_replicas = EXCLUDED.ready_replicas,
+			containers     = EXCLUDED.containers,
 			labels         = EXCLUDED.labels,
 			spec           = EXCLUDED.spec,
 			updated_at     = EXCLUDED.updated_at
 		RETURNING id, namespace_id, kind, name, replicas, ready_replicas,
-		          labels, spec, created_at, updated_at
+		          containers, labels, spec, created_at, updated_at
 	`
 	row := p.pool.QueryRow(ctx, q,
 		id, in.NamespaceId, string(in.Kind), in.Name, in.Replicas, in.ReadyReplicas,
-		labelsJSON, specJSON, now,
+		containersJSON, labelsJSON, specJSON, now,
 	)
 	w, err := scanWorkload(row)
 	if err != nil {
@@ -1242,21 +1276,22 @@ func marshalSpec(spec *map[string]interface{}) ([]byte, error) {
 
 func scanWorkload(row pgx.Row) (api.Workload, error) {
 	var (
-		w             api.Workload
-		id            uuid.UUID
-		namespaceID   uuid.UUID
-		kind          string
-		replicas      sql.NullInt32
-		readyReplicas sql.NullInt32
-		createdAt     time.Time
-		updatedAt     time.Time
-		labelsJSON    []byte
-		specJSON      []byte
+		w              api.Workload
+		id             uuid.UUID
+		namespaceID    uuid.UUID
+		kind           string
+		replicas       sql.NullInt32
+		readyReplicas  sql.NullInt32
+		createdAt      time.Time
+		updatedAt      time.Time
+		containersJSON []byte
+		labelsJSON     []byte
+		specJSON       []byte
 	)
 	if err := row.Scan(
 		&id, &namespaceID, &kind, &w.Name,
 		&replicas, &readyReplicas,
-		&labelsJSON, &specJSON,
+		&containersJSON, &labelsJSON, &specJSON,
 		&createdAt, &updatedAt,
 	); err != nil {
 		return api.Workload{}, err
@@ -1273,6 +1308,11 @@ func scanWorkload(row pgx.Row) (api.Workload, error) {
 	if readyReplicas.Valid {
 		v := int(readyReplicas.Int32)
 		w.ReadyReplicas = &v
+	}
+	if cs, err := unmarshalContainers(containersJSON); err != nil {
+		return api.Workload{}, fmt.Errorf("unmarshal workload containers: %w", err)
+	} else if cs != nil {
+		w.Containers = cs
 	}
 	if len(labelsJSON) > 0 {
 		var labels map[string]string
@@ -1964,20 +2004,21 @@ func scanService(row pgx.Row) (api.Service, error) {
 
 func scanPod(row pgx.Row) (api.Pod, error) {
 	var (
-		p           api.Pod
-		id          uuid.UUID
-		namespaceID uuid.UUID
-		createdAt   time.Time
-		updatedAt   time.Time
-		phase       sql.NullString
-		nodeName    sql.NullString
-		podIP       sql.NullString
-		labelsJSON  []byte
+		p              api.Pod
+		id             uuid.UUID
+		namespaceID    uuid.UUID
+		createdAt      time.Time
+		updatedAt      time.Time
+		phase          sql.NullString
+		nodeName       sql.NullString
+		podIP          sql.NullString
+		containersJSON []byte
+		labelsJSON     []byte
 	)
 	if err := row.Scan(
 		&id, &namespaceID, &p.Name,
 		&phase, &nodeName, &podIP,
-		&labelsJSON,
+		&containersJSON, &labelsJSON,
 		&createdAt, &updatedAt,
 	); err != nil {
 		return api.Pod{}, err
@@ -1989,6 +2030,11 @@ func scanPod(row pgx.Row) (api.Pod, error) {
 	p.Phase = nullableString(phase)
 	p.NodeName = nullableString(nodeName)
 	p.PodIp = nullableString(podIP)
+	if cs, err := unmarshalContainers(containersJSON); err != nil {
+		return api.Pod{}, fmt.Errorf("unmarshal pod containers: %w", err)
+	} else if cs != nil {
+		p.Containers = cs
+	}
 	if len(labelsJSON) > 0 {
 		var labels map[string]string
 		if err := json.Unmarshal(labelsJSON, &labels); err != nil {
@@ -1999,6 +2045,22 @@ func scanPod(row pgx.Row) (api.Pod, error) {
 		}
 	}
 	return p, nil
+}
+
+// unmarshalContainers decodes a JSONB array into the shared ContainerList
+// type. Returns nil when the column is empty or contains an empty array.
+func unmarshalContainers(b []byte) (*api.ContainerList, error) {
+	if len(b) == 0 {
+		return nil, nil
+	}
+	var cs api.ContainerList
+	if err := json.Unmarshal(b, &cs); err != nil {
+		return nil, err
+	}
+	if len(cs) == 0 {
+		return nil, nil
+	}
+	return &cs, nil
 }
 
 func scanNamespace(row pgx.Row) (api.Namespace, error) {
