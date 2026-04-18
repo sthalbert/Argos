@@ -32,7 +32,10 @@ func newTestPG(t *testing.T) *PG {
 		t.Fatalf("migrate: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pg.pool.Exec(context.Background(), "TRUNCATE clusters")
+		// CASCADE is required because nodes has a FK to clusters; without it
+		// a plain TRUNCATE fails when the nodes table is non-empty and test
+		// residue leaks across tests that share the same database.
+		_, _ = pg.pool.Exec(context.Background(), "TRUNCATE clusters CASCADE")
 		pg.Close()
 	})
 	return pg
@@ -164,6 +167,57 @@ func TestPGNodeCRUD(t *testing.T) {
 	}
 	if _, err := pg.GetNode(ctx, *node.Id); !errors.Is(err, api.ErrNotFound) {
 		t.Errorf("node should have cascaded with cluster delete, got %v", err)
+	}
+}
+
+func TestPGUpsertNode(t *testing.T) {
+	pg := newTestPG(t)
+	ctx := context.Background()
+
+	cluster, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: "upsert-test"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+
+	kv1 := "v1.29.5"
+	first, err := pg.UpsertNode(ctx, api.NodeCreate{
+		ClusterId:      *cluster.Id,
+		Name:           "node-a",
+		KubeletVersion: &kv1,
+	})
+	if err != nil {
+		t.Fatalf("first upsert: %v", err)
+	}
+	if first.Id == nil {
+		t.Fatal("first.Id nil")
+	}
+
+	// Second upsert with new kubelet version must mutate the SAME row.
+	kv2 := "v1.29.6"
+	second, err := pg.UpsertNode(ctx, api.NodeCreate{
+		ClusterId:      *cluster.Id,
+		Name:           "node-a",
+		KubeletVersion: &kv2,
+	})
+	if err != nil {
+		t.Fatalf("second upsert: %v", err)
+	}
+	if *second.Id != *first.Id {
+		t.Errorf("id changed across upsert: first=%v second=%v", *first.Id, *second.Id)
+	}
+	if second.KubeletVersion == nil || *second.KubeletVersion != kv2 {
+		t.Errorf("kubelet_version=%v, want %q", second.KubeletVersion, kv2)
+	}
+	if second.CreatedAt == nil || first.CreatedAt == nil || !second.CreatedAt.Equal(*first.CreatedAt) {
+		t.Errorf("created_at should be preserved on conflict: first=%v second=%v", first.CreatedAt, second.CreatedAt)
+	}
+	if second.UpdatedAt == nil || first.UpdatedAt == nil || !second.UpdatedAt.After(*first.UpdatedAt) {
+		t.Errorf("updated_at should advance on conflict: first=%v second=%v", first.UpdatedAt, second.UpdatedAt)
+	}
+
+	// Unknown cluster yields NotFound, not Conflict.
+	if _, err := pg.UpsertNode(ctx, api.NodeCreate{ClusterId: uuid.New(), Name: "x"}); !errors.Is(err, api.ErrNotFound) {
+		t.Errorf("upsert with unknown cluster: want ErrNotFound, got %v", err)
 	}
 }
 

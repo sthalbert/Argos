@@ -454,6 +454,48 @@ func (p *PG) DeleteNode(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// UpsertNode inserts-or-updates a node keyed by (cluster_id, name). The
+// unique index on (cluster_id, name) drives the ON CONFLICT target. On
+// conflict only mutable columns are overwritten so created_at is preserved.
+func (p *PG) UpsertNode(ctx context.Context, in api.NodeCreate) (api.Node, error) {
+	id := uuid.New()
+	now := time.Now().UTC()
+
+	labelsJSON, err := marshalLabels(in.Labels)
+	if err != nil {
+		return api.Node{}, err
+	}
+
+	const q = `
+		INSERT INTO nodes (
+			id, cluster_id, name, display_name, kubelet_version,
+			os_image, architecture, labels, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+		ON CONFLICT (cluster_id, name) DO UPDATE SET
+			display_name    = EXCLUDED.display_name,
+			kubelet_version = EXCLUDED.kubelet_version,
+			os_image        = EXCLUDED.os_image,
+			architecture    = EXCLUDED.architecture,
+			labels          = EXCLUDED.labels,
+			updated_at      = EXCLUDED.updated_at
+		RETURNING id, cluster_id, name, display_name, kubelet_version,
+		          os_image, architecture, labels, created_at, updated_at
+	`
+	row := p.pool.QueryRow(ctx, q,
+		id, in.ClusterId, in.Name, in.DisplayName, in.KubeletVersion,
+		in.OsImage, in.Architecture, labelsJSON, now,
+	)
+	n, err := scanNode(row)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return api.Node{}, fmt.Errorf("cluster %s does not exist: %w", in.ClusterId, api.ErrNotFound)
+		}
+		return api.Node{}, fmt.Errorf("upsert node: %w", err)
+	}
+	return n, nil
+}
+
 func scanNode(row pgx.Row) (api.Node, error) {
 	var (
 		n               api.Node
