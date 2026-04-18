@@ -13,13 +13,20 @@ import (
 	"github.com/sthalbert/argos/internal/api"
 )
 
-type fakeFetcher struct {
-	version string
-	err     error
+// fakeSource implements KubeSource with fixed results.
+type fakeSource struct {
+	version     string
+	versionErr  error
+	nodes       []NodeInfo
+	listNodeErr error
 }
 
-func (f *fakeFetcher) ServerVersion(_ context.Context) (string, error) {
-	return f.version, f.err
+func (f *fakeSource) ServerVersion(_ context.Context) (string, error) {
+	return f.version, f.versionErr
+}
+
+func (f *fakeSource) ListNodes(_ context.Context) ([]NodeInfo, error) {
+	return f.nodes, f.listNodeErr
 }
 
 type recordedUpdate struct {
@@ -28,11 +35,20 @@ type recordedUpdate struct {
 }
 
 type fakeStore struct {
-	mu        sync.Mutex
-	clusters  []api.Cluster
-	updates   []recordedUpdate
-	listErr   error
-	updateErr error
+	mu           sync.Mutex
+	clusters     []api.Cluster
+	updates      []recordedUpdate
+	upsertedNode []api.NodeCreate
+	listErr      error
+	updateErr    error
+	upsertErr    error
+	// nodeState mirrors per-(cluster_id, name) upsert history so tests can
+	// assert idempotent behaviour.
+	nodeState map[string]int // key: cluster_id/name, value: upsert count
+}
+
+func newFakeStore() *fakeStore {
+	return &fakeStore{nodeState: make(map[string]int)}
 }
 
 func (s *fakeStore) ListClusters(_ context.Context, _ int, _ string) ([]api.Cluster, string, error) {
@@ -64,16 +80,33 @@ func (s *fakeStore) UpdateCluster(_ context.Context, id uuid.UUID, in api.Cluste
 	return api.Cluster{}, api.ErrNotFound
 }
 
+func (s *fakeStore) UpsertNode(_ context.Context, in api.NodeCreate) (api.Node, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.upsertErr != nil {
+		return api.Node{}, s.upsertErr
+	}
+	s.upsertedNode = append(s.upsertedNode, in)
+	key := in.ClusterId.String() + "/" + in.Name
+	s.nodeState[key]++
+	id := uuid.New()
+	return api.Node{
+		Id:             &id,
+		ClusterId:      in.ClusterId,
+		Name:           in.Name,
+		KubeletVersion: in.KubeletVersion,
+	}, nil
+}
+
 func TestPollUpdatesVersionWhenChanged(t *testing.T) {
 	t.Parallel()
 	id := uuid.New()
 	old := "v1.28.0"
-	store := &fakeStore{
-		clusters: []api.Cluster{
-			{Id: &id, Name: "prod", KubernetesVersion: &old},
-		},
+	store := newFakeStore()
+	store.clusters = []api.Cluster{
+		{Id: &id, Name: "prod", KubernetesVersion: &old},
 	}
-	c := New(store, &fakeFetcher{version: "v1.29.5"}, "prod", time.Minute, time.Second)
+	c := New(store, &fakeSource{version: "v1.29.5"}, "prod", time.Minute, time.Second)
 
 	c.poll(context.Background())
 
@@ -95,12 +128,11 @@ func TestPollSkipsWhenVersionUnchanged(t *testing.T) {
 	t.Parallel()
 	id := uuid.New()
 	current := "v1.29.5"
-	store := &fakeStore{
-		clusters: []api.Cluster{
-			{Id: &id, Name: "prod", KubernetesVersion: &current},
-		},
+	store := newFakeStore()
+	store.clusters = []api.Cluster{
+		{Id: &id, Name: "prod", KubernetesVersion: &current},
 	}
-	c := New(store, &fakeFetcher{version: current}, "prod", time.Minute, time.Second)
+	c := New(store, &fakeSource{version: current}, "prod", time.Minute, time.Second)
 
 	c.poll(context.Background())
 
@@ -109,75 +141,183 @@ func TestPollSkipsWhenVersionUnchanged(t *testing.T) {
 	}
 }
 
-func TestPollSkipsOnFetcherError(t *testing.T) {
+func TestPollSkipsOnVersionError(t *testing.T) {
 	t.Parallel()
 	id := uuid.New()
-	store := &fakeStore{
-		clusters: []api.Cluster{{Id: &id, Name: "prod"}},
-	}
-	c := New(store, &fakeFetcher{err: errors.New("boom")}, "prod", time.Minute, time.Second)
+	store := newFakeStore()
+	store.clusters = []api.Cluster{{Id: &id, Name: "prod"}}
+	c := New(store, &fakeSource{versionErr: errors.New("boom")}, "prod", time.Minute, time.Second)
 
 	c.poll(context.Background())
 
-	if len(store.updates) != 0 {
-		t.Errorf("expected no updates on fetcher error, got %d", len(store.updates))
+	if len(store.updates) != 0 || len(store.upsertedNode) != 0 {
+		t.Errorf("expected no store writes on version error; updates=%d upserts=%d", len(store.updates), len(store.upsertedNode))
 	}
 }
 
-func TestPollSkipsOnListError(t *testing.T) {
+func TestPollSkipsOnListClustersError(t *testing.T) {
 	t.Parallel()
-	store := &fakeStore{listErr: errors.New("db down")}
-	c := New(store, &fakeFetcher{version: "v1.29.5"}, "prod", time.Minute, time.Second)
+	store := newFakeStore()
+	store.listErr = errors.New("db down")
+	c := New(store, &fakeSource{version: "v1.29.5"}, "prod", time.Minute, time.Second)
 
 	c.poll(context.Background())
 
-	if len(store.updates) != 0 {
-		t.Errorf("expected no updates on list error, got %d", len(store.updates))
+	if len(store.updates) != 0 || len(store.upsertedNode) != 0 {
+		t.Errorf("expected no store writes on list error")
 	}
 }
 
 func TestPollSkipsWhenClusterNotRegistered(t *testing.T) {
 	t.Parallel()
-	store := &fakeStore{clusters: []api.Cluster{}}
-	c := New(store, &fakeFetcher{version: "v1.29.5"}, "missing", time.Minute, time.Second)
+	store := newFakeStore()
+	c := New(store, &fakeSource{version: "v1.29.5"}, "missing", time.Minute, time.Second)
 
 	c.poll(context.Background())
 
-	if len(store.updates) != 0 {
-		t.Errorf("expected no updates when cluster missing, got %d", len(store.updates))
+	if len(store.updates) != 0 || len(store.upsertedNode) != 0 {
+		t.Errorf("expected no store writes when cluster missing")
 	}
 }
 
-type signalingFetcher struct {
+func TestPollIngestsNodes(t *testing.T) {
+	t.Parallel()
+	id := uuid.New()
+	store := newFakeStore()
+	store.clusters = []api.Cluster{{Id: &id, Name: "prod"}}
+
+	source := &fakeSource{
+		version: "v1.29.5",
+		nodes: []NodeInfo{
+			{Name: "node-a", KubeletVersion: "v1.29.5", OsImage: "Ubuntu 22.04", Architecture: "amd64"},
+			{Name: "node-b", KubeletVersion: "v1.29.5", Labels: map[string]string{"role": "worker"}},
+		},
+	}
+	c := New(store, source, "prod", time.Minute, time.Second)
+
+	c.poll(context.Background())
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.upsertedNode) != 2 {
+		t.Fatalf("upserted=%d, want 2", len(store.upsertedNode))
+	}
+	// Every upsert must carry the correct cluster id.
+	for _, up := range store.upsertedNode {
+		if up.ClusterId != id {
+			t.Errorf("upsert cluster_id=%v, want %v", up.ClusterId, id)
+		}
+	}
+	// Empty label map must NOT be written as a non-nil pointer.
+	if store.upsertedNode[0].Labels != nil {
+		t.Errorf("node-a labels = %v, want nil", store.upsertedNode[0].Labels)
+	}
+	// Non-empty label map must round-trip through a pointer.
+	if store.upsertedNode[1].Labels == nil || (*store.upsertedNode[1].Labels)["role"] != "worker" {
+		t.Errorf("node-b labels = %v, want {role:worker}", store.upsertedNode[1].Labels)
+	}
+}
+
+func TestPollIngestsNodesIsIdempotent(t *testing.T) {
+	t.Parallel()
+	id := uuid.New()
+	store := newFakeStore()
+	store.clusters = []api.Cluster{{Id: &id, Name: "prod"}}
+
+	source := &fakeSource{
+		version: "v1.29.5",
+		nodes:   []NodeInfo{{Name: "node-a"}},
+	}
+	c := New(store, source, "prod", time.Minute, time.Second)
+
+	c.poll(context.Background())
+	c.poll(context.Background())
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if got := store.nodeState[id.String()+"/node-a"]; got != 2 {
+		t.Errorf("expected node-a upsert count 2 (one per poll), got %d", got)
+	}
+}
+
+func TestPollContinuesOnPerNodeUpsertError(t *testing.T) {
+	t.Parallel()
+	id := uuid.New()
+	store := newFakeStore()
+	store.clusters = []api.Cluster{{Id: &id, Name: "prod"}}
+	store.upsertErr = errors.New("boom")
+
+	source := &fakeSource{
+		version: "v1.29.5",
+		nodes: []NodeInfo{
+			{Name: "node-a"}, {Name: "node-b"}, {Name: "node-c"},
+		},
+	}
+	c := New(store, source, "prod", time.Minute, time.Second)
+
+	// poll must not panic or return early on upsert error.
+	c.poll(context.Background())
+
+	// The version update already happened before UpsertNode errors.
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.updates) != 1 {
+		t.Errorf("expected cluster version update despite node upsert failures, got %d updates", len(store.updates))
+	}
+}
+
+func TestPollSkipsNodeIngestionOnListNodesError(t *testing.T) {
+	t.Parallel()
+	id := uuid.New()
+	store := newFakeStore()
+	store.clusters = []api.Cluster{{Id: &id, Name: "prod"}}
+
+	source := &fakeSource{
+		version:     "v1.29.5",
+		listNodeErr: errors.New("kube down"),
+	}
+	c := New(store, source, "prod", time.Minute, time.Second)
+
+	c.poll(context.Background())
+
+	if len(store.upsertedNode) != 0 {
+		t.Errorf("expected no node upserts when ListNodes errors; got %d", len(store.upsertedNode))
+	}
+}
+
+type signalingSource struct {
+	fakeSource
 	calls atomic.Int64
 	ch    chan struct{}
 }
 
-func (c *signalingFetcher) ServerVersion(_ context.Context) (string, error) {
-	c.calls.Add(1)
+func (s *signalingSource) ServerVersion(ctx context.Context) (string, error) {
+	s.calls.Add(1)
 	select {
-	case c.ch <- struct{}{}:
+	case s.ch <- struct{}{}:
 	default:
 	}
-	return "v1.29.5", nil
+	return s.fakeSource.ServerVersion(ctx)
 }
 
 func TestRunStopsOnContextCancel(t *testing.T) {
 	t.Parallel()
 	id := uuid.New()
-	store := &fakeStore{
-		clusters: []api.Cluster{{Id: &id, Name: "prod"}},
+	store := newFakeStore()
+	store.clusters = []api.Cluster{{Id: &id, Name: "prod"}}
+
+	source := &signalingSource{
+		fakeSource: fakeSource{version: "v1.29.5"},
+		ch:         make(chan struct{}, 4),
 	}
-	fetcher := &signalingFetcher{ch: make(chan struct{}, 4)}
-	c := New(store, fetcher, "prod", 20*time.Millisecond, time.Second)
+	c := New(store, source, "prod", 20*time.Millisecond, time.Second)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- c.Run(ctx) }()
 
-	// Wait deterministically for two ticks (startup + one ticker fire).
-	waitForSignal(t, fetcher.ch, 2*time.Second)
-	waitForSignal(t, fetcher.ch, 2*time.Second)
+	waitForSignal(t, source.ch, 2*time.Second)
+	waitForSignal(t, source.ch, 2*time.Second)
 
 	cancel()
 
@@ -190,7 +330,7 @@ func TestRunStopsOnContextCancel(t *testing.T) {
 		t.Fatal("Run did not return after cancel")
 	}
 
-	if got := fetcher.calls.Load(); got < 2 {
+	if got := source.calls.Load(); got < 2 {
 		t.Errorf("expected at least 2 fetches, got %d", got)
 	}
 }

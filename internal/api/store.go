@@ -56,4 +56,10 @@ type Store interface {
 
 	// DeleteNode removes a node by id. Returns ErrNotFound if absent.
 	DeleteNode(ctx context.Context, id uuid.UUID) error
+
+	// UpsertNode inserts a node when no row exists for (cluster_id, name),
+	// or updates the mutable fields of the existing row when it does. The
+	// returned Node always reflects the post-operation state. Returns
+	// ErrNotFound if the parent cluster does not exist.
+	UpsertNode(ctx context.Context, in NodeCreate) (Node, error)
 }

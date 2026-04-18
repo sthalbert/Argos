@@ -131,11 +131,11 @@ func maybeStartCollector(ctx context.Context, s api.Store) error {
 	}
 	kubeconfig := os.Getenv("ARGOS_KUBECONFIG")
 
-	fetcher, err := collector.NewKubeVersionFetcher(kubeconfig)
+	source, err := collector.NewKubeClient(kubeconfig)
 	if err != nil {
-		return fmt.Errorf("init kube fetcher: %w", err)
+		return fmt.Errorf("init kube client: %w", err)
 	}
-	coll := collector.New(s, fetcher, clusterName, interval, fetchTimeout)
+	coll := collector.New(s, source, clusterName, interval, fetchTimeout)
 
 	go func() {
 		if err := coll.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {

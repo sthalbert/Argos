@@ -240,6 +240,46 @@ func (m *memStore) DeleteNode(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
+func (m *memStore) UpsertNode(_ context.Context, in NodeCreate) (Node, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.byID[in.ClusterId]; !ok {
+		return Node{}, ErrNotFound
+	}
+	key := nodeNatKey(in.ClusterId, in.Name)
+	now := time.Now().UTC().Add(time.Duration(m.createdN) * time.Nanosecond)
+	m.createdN++
+
+	if existingID, exists := m.nodesByNatKey[key]; exists {
+		n := m.nodesByID[existingID]
+		n.DisplayName = in.DisplayName
+		n.KubeletVersion = in.KubeletVersion
+		n.OsImage = in.OsImage
+		n.Architecture = in.Architecture
+		n.Labels = in.Labels
+		n.UpdatedAt = &now
+		m.nodesByID[existingID] = n
+		return n, nil
+	}
+
+	id := uuid.New()
+	n := Node{
+		Id:             &id,
+		ClusterId:      in.ClusterId,
+		Name:           in.Name,
+		DisplayName:    in.DisplayName,
+		KubeletVersion: in.KubeletVersion,
+		OsImage:        in.OsImage,
+		Architecture:   in.Architecture,
+		Labels:         in.Labels,
+		CreatedAt:      &now,
+		UpdatedAt:      &now,
+	}
+	m.nodesByID[id] = n
+	m.nodesByNatKey[key] = id
+	return n, nil
+}
+
 func newTestHandler(t *testing.T, store Store) http.Handler {
 	t.Helper()
 	return Handler(NewServer("test", store))
