@@ -38,7 +38,9 @@ Argos is a CMDB (Configuration Management Database) for Kubernetes environments,
 
 The codebase currently covers the API layer only:
 
-- `cmd/argosd/main.go` — daemon entry point: env-based configuration (`ARGOS_ADDR`, `ARGOS_SHUTDOWN_TIMEOUT`), HTTP server startup, graceful shutdown on SIGINT / SIGTERM.
-- `internal/api/` — generated server (`api.gen.go`) + hand-written handlers (`server.go`) implementing `ServerInterface`. Health probes are real; cluster handlers stub to `501 Not Implemented` until the store lands. RFC 7807 `application/problem+json` for all errors.
+- `cmd/argosd/main.go` — daemon entry point: env-based configuration (`ARGOS_ADDR`, `ARGOS_DATABASE_URL`, `ARGOS_AUTO_MIGRATE`, `ARGOS_SHUTDOWN_TIMEOUT`), opens the PostgreSQL pool, runs migrations, starts the HTTP server, handles graceful shutdown on SIGINT / SIGTERM.
+- `internal/api/` — generated server (`api.gen.go`), hand-written handlers (`server.go`), `Store` interface (`store.go`) with `ErrNotFound` / `ErrConflict` sentinels. RFC 7807 `application/problem+json` for all errors.
+- `internal/store/` — PostgreSQL implementation of `api.Store` using `pgx/v5`. Cursor-paginated list, merge-patch updates, embedded `goose` migrations.
+- `migrations/` — timestamped SQL migrations, embedded in the binary via `migrations/embed.go`.
 
-Remaining subsystems (PostgreSQL store, Kubernetes collector) will arrive with follow-up docs on how K8s kinds map to ANSSI cartography layers and how snapshots are versioned in PostgreSQL.
+The Kubernetes collector is the next subsystem to land, alongside docs on how K8s kinds map to ANSSI cartography layers and how snapshots are versioned in PostgreSQL.

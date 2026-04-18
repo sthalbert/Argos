@@ -9,10 +9,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/sthalbert/argos/internal/api"
+	"github.com/sthalbert/argos/internal/store"
 )
 
 // version is set at build time via -ldflags.
@@ -30,19 +32,40 @@ func main() {
 
 func run() error {
 	addr := envOr("ARGOS_ADDR", ":8080")
+	dsn := os.Getenv("ARGOS_DATABASE_URL")
+	if dsn == "" {
+		return errors.New("ARGOS_DATABASE_URL is required")
+	}
 	shutdownTimeout, err := parseDurationEnv("ARGOS_SHUTDOWN_TIMEOUT", 15*time.Second)
 	if err != nil {
 		return err
 	}
-
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           api.Handler(api.NewServer(version)),
-		ReadHeaderTimeout: 10 * time.Second,
+	autoMigrate, err := parseBoolEnv("ARGOS_AUTO_MIGRATE", true)
+	if err != nil {
+		return err
 	}
 
 	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	pg, err := store.Open(rootCtx, dsn)
+	if err != nil {
+		return fmt.Errorf("open store: %w", err)
+	}
+	defer pg.Close()
+
+	if autoMigrate {
+		if err := pg.Migrate(rootCtx); err != nil {
+			return fmt.Errorf("migrate: %w", err)
+		}
+		slog.Info("migrations applied")
+	}
+
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           api.Handler(api.NewServer(version, pg)),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -89,4 +112,16 @@ func parseDurationEnv(key string, fallback time.Duration) (time.Duration, error)
 		return 0, fmt.Errorf("parse %s=%q: %w", key, v, err)
 	}
 	return d, nil
+}
+
+func parseBoolEnv(key string, fallback bool) (bool, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback, nil
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return false, fmt.Errorf("parse %s=%q: %w", key, v, err)
+	}
+	return b, nil
 }
