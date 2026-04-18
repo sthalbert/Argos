@@ -454,6 +454,262 @@ func (p *PG) DeleteNode(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// CreateNamespace inserts a new namespace.
+func (p *PG) CreateNamespace(ctx context.Context, in api.NamespaceCreate) (api.Namespace, error) {
+	id := uuid.New()
+	now := time.Now().UTC()
+
+	labelsJSON, err := marshalLabels(in.Labels)
+	if err != nil {
+		return api.Namespace{}, err
+	}
+
+	const q = `
+		INSERT INTO namespaces (
+			id, cluster_id, name, display_name, phase,
+			labels, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+	`
+	_, err = p.pool.Exec(ctx, q,
+		id, in.ClusterId, in.Name, in.DisplayName, in.Phase,
+		labelsJSON, now,
+	)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			switch pgErr.Code {
+			case "23505":
+				return api.Namespace{}, fmt.Errorf("namespace %q in cluster %s already exists: %w", in.Name, in.ClusterId, api.ErrConflict)
+			case "23503":
+				return api.Namespace{}, fmt.Errorf("cluster %s does not exist: %w", in.ClusterId, api.ErrNotFound)
+			}
+		}
+		return api.Namespace{}, fmt.Errorf("insert namespace: %w", err)
+	}
+
+	return api.Namespace{
+		Id:          &id,
+		ClusterId:   in.ClusterId,
+		Name:        in.Name,
+		DisplayName: in.DisplayName,
+		Phase:       in.Phase,
+		Labels:      in.Labels,
+		CreatedAt:   &now,
+		UpdatedAt:   &now,
+	}, nil
+}
+
+// GetNamespace fetches a namespace by id.
+func (p *PG) GetNamespace(ctx context.Context, id uuid.UUID) (api.Namespace, error) {
+	const q = `
+		SELECT id, cluster_id, name, display_name, phase,
+		       labels, created_at, updated_at
+		FROM namespaces
+		WHERE id = $1
+	`
+	row := p.pool.QueryRow(ctx, q, id)
+	n, err := scanNamespace(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return api.Namespace{}, api.ErrNotFound
+		}
+		return api.Namespace{}, fmt.Errorf("select namespace: %w", err)
+	}
+	return n, nil
+}
+
+// ListNamespaces returns up to limit namespaces sorted (created_at DESC, id DESC).
+func (p *PG) ListNamespaces(ctx context.Context, clusterID *uuid.UUID, limit int, cursor string) ([]api.Namespace, string, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	sb := strings.Builder{}
+	sb.WriteString(`SELECT id, cluster_id, name, display_name, phase,
+	                       labels, created_at, updated_at
+	                FROM namespaces`)
+	args := make([]any, 0, 4)
+	conds := make([]string, 0, 2)
+
+	if clusterID != nil {
+		args = append(args, *clusterID)
+		conds = append(conds, fmt.Sprintf("cluster_id = $%d", len(args)))
+	}
+	if cursor != "" {
+		ts, cid, err := decodeCursor(cursor)
+		if err != nil {
+			return nil, "", err
+		}
+		args = append(args, ts)
+		tsIdx := len(args)
+		args = append(args, cid)
+		idIdx := len(args)
+		conds = append(conds, fmt.Sprintf("(created_at, id) < ($%d, $%d)", tsIdx, idIdx))
+	}
+	if len(conds) > 0 {
+		sb.WriteString(" WHERE ")
+		sb.WriteString(strings.Join(conds, " AND "))
+	}
+	args = append(args, limit+1)
+	fmt.Fprintf(&sb, " ORDER BY created_at DESC, id DESC LIMIT $%d", len(args))
+
+	rows, err := p.pool.Query(ctx, sb.String(), args...)
+	if err != nil {
+		return nil, "", fmt.Errorf("query namespaces: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]api.Namespace, 0, limit)
+	for rows.Next() {
+		n, err := scanNamespace(rows)
+		if err != nil {
+			return nil, "", fmt.Errorf("scan namespace: %w", err)
+		}
+		items = append(items, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", fmt.Errorf("iterate namespaces: %w", err)
+	}
+
+	var next string
+	if len(items) > limit {
+		last := items[limit-1]
+		if last.CreatedAt != nil && last.Id != nil {
+			next = encodeCursor(*last.CreatedAt, *last.Id)
+		}
+		items = items[:limit]
+	}
+	return items, next, nil
+}
+
+// UpdateNamespace applies merge-patch semantics on mutable fields.
+func (p *PG) UpdateNamespace(ctx context.Context, id uuid.UUID, in api.NamespaceUpdate) (api.Namespace, error) {
+	sets := make([]string, 0, 4)
+	args := make([]any, 0, 6)
+	idx := 1
+	appendSet := func(column string, value any) {
+		sets = append(sets, fmt.Sprintf("%s=$%d", column, idx))
+		args = append(args, value)
+		idx++
+	}
+
+	if in.DisplayName != nil {
+		appendSet("display_name", *in.DisplayName)
+	}
+	if in.Phase != nil {
+		appendSet("phase", *in.Phase)
+	}
+	if in.Labels != nil {
+		b, err := marshalLabels(in.Labels)
+		if err != nil {
+			return api.Namespace{}, err
+		}
+		appendSet("labels", b)
+	}
+	appendSet("updated_at", time.Now().UTC())
+	args = append(args, id)
+
+	q := fmt.Sprintf("UPDATE namespaces SET %s WHERE id=$%d", strings.Join(sets, ", "), idx)
+	tag, err := p.pool.Exec(ctx, q, args...)
+	if err != nil {
+		return api.Namespace{}, fmt.Errorf("update namespace: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return api.Namespace{}, api.ErrNotFound
+	}
+	return p.GetNamespace(ctx, id)
+}
+
+// DeleteNamespace removes a namespace by id.
+func (p *PG) DeleteNamespace(ctx context.Context, id uuid.UUID) error {
+	tag, err := p.pool.Exec(ctx, "DELETE FROM namespaces WHERE id=$1", id)
+	if err != nil {
+		return fmt.Errorf("delete namespace: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return api.ErrNotFound
+	}
+	return nil
+}
+
+// UpsertNamespace inserts-or-updates a namespace keyed by (cluster_id, name).
+func (p *PG) UpsertNamespace(ctx context.Context, in api.NamespaceCreate) (api.Namespace, error) {
+	id := uuid.New()
+	now := time.Now().UTC()
+
+	labelsJSON, err := marshalLabels(in.Labels)
+	if err != nil {
+		return api.Namespace{}, err
+	}
+
+	const q = `
+		INSERT INTO namespaces (
+			id, cluster_id, name, display_name, phase,
+			labels, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+		ON CONFLICT (cluster_id, name) DO UPDATE SET
+			display_name = EXCLUDED.display_name,
+			phase        = EXCLUDED.phase,
+			labels       = EXCLUDED.labels,
+			updated_at   = EXCLUDED.updated_at
+		RETURNING id, cluster_id, name, display_name, phase,
+		          labels, created_at, updated_at
+	`
+	row := p.pool.QueryRow(ctx, q,
+		id, in.ClusterId, in.Name, in.DisplayName, in.Phase,
+		labelsJSON, now,
+	)
+	n, err := scanNamespace(row)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return api.Namespace{}, fmt.Errorf("cluster %s does not exist: %w", in.ClusterId, api.ErrNotFound)
+		}
+		return api.Namespace{}, fmt.Errorf("upsert namespace: %w", err)
+	}
+	return n, nil
+}
+
+func scanNamespace(row pgx.Row) (api.Namespace, error) {
+	var (
+		n           api.Namespace
+		id          uuid.UUID
+		clusterID   uuid.UUID
+		createdAt   time.Time
+		updatedAt   time.Time
+		displayName sql.NullString
+		phase       sql.NullString
+		labelsJSON  []byte
+	)
+	if err := row.Scan(
+		&id, &clusterID, &n.Name,
+		&displayName, &phase,
+		&labelsJSON,
+		&createdAt, &updatedAt,
+	); err != nil {
+		return api.Namespace{}, err
+	}
+	n.Id = &id
+	n.ClusterId = clusterID
+	n.CreatedAt = &createdAt
+	n.UpdatedAt = &updatedAt
+	n.DisplayName = nullableString(displayName)
+	n.Phase = nullableString(phase)
+	if len(labelsJSON) > 0 {
+		var labels map[string]string
+		if err := json.Unmarshal(labelsJSON, &labels); err != nil {
+			return api.Namespace{}, fmt.Errorf("unmarshal namespace labels: %w", err)
+		}
+		if len(labels) > 0 {
+			n.Labels = &labels
+		}
+	}
+	return n, nil
+}
+
 // UpsertNode inserts-or-updates a node keyed by (cluster_id, name). The
 // unique index on (cluster_id, name) drives the ON CONFLICT target. On
 // conflict only mutable columns are overwritten so created_at is preserved.

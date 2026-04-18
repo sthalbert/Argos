@@ -141,6 +141,71 @@ type Health struct {
 // HealthStatus defines model for Health.Status.
 type HealthStatus string
 
+// Namespace defines model for Namespace.
+type Namespace struct {
+	ClusterId openapi_types.UUID `json:"cluster_id"`
+	CreatedAt *time.Time         `json:"created_at,omitempty"`
+
+	// DisplayName Human-friendly label, free-form.
+	DisplayName *string             `json:"display_name,omitempty"`
+	Id          *openapi_types.UUID `json:"id,omitempty"`
+
+	// Labels Arbitrary user-supplied string key/value labels.
+	Labels *map[string]string `json:"labels,omitempty"`
+	Name   string             `json:"name"`
+
+	// Phase Kubernetes namespace phase as last observed (e.g. "Active", "Terminating").
+	// Open-ended to accommodate any additional phases Kubernetes introduces.
+	Phase     *string    `json:"phase,omitempty"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+}
+
+// NamespaceCreate defines model for NamespaceCreate.
+type NamespaceCreate struct {
+	// ClusterId Parent cluster id. Immutable after creation; the cluster must
+	// already exist or the create returns 404.
+	ClusterId openapi_types.UUID `json:"cluster_id"`
+
+	// DisplayName Human-friendly label, free-form.
+	DisplayName *string `json:"display_name,omitempty"`
+
+	// Labels Arbitrary user-supplied string key/value labels.
+	Labels *map[string]string `json:"labels,omitempty"`
+
+	// Name Kubernetes namespace name (DNS-label style). Unique per cluster.
+	// Immutable after creation.
+	Name string `json:"name"`
+
+	// Phase Kubernetes namespace phase as last observed (e.g. "Active", "Terminating").
+	// Open-ended to accommodate any additional phases Kubernetes introduces.
+	Phase *string `json:"phase,omitempty"`
+}
+
+// NamespaceList Paged list of namespaces.
+type NamespaceList struct {
+	Items []Namespace `json:"items"`
+
+	// NextCursor Opaque cursor to pass as `?cursor=` to fetch the next page.
+	// Absent or null when no more pages remain.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// NamespaceMutable Fields on a Namespace that clients may set and later update.
+type NamespaceMutable struct {
+	// DisplayName Human-friendly label, free-form.
+	DisplayName *string `json:"display_name,omitempty"`
+
+	// Labels Arbitrary user-supplied string key/value labels.
+	Labels *map[string]string `json:"labels,omitempty"`
+
+	// Phase Kubernetes namespace phase as last observed (e.g. "Active", "Terminating").
+	// Open-ended to accommodate any additional phases Kubernetes introduces.
+	Phase *string `json:"phase,omitempty"`
+}
+
+// NamespaceUpdate Fields on a Namespace that clients may set and later update.
+type NamespaceUpdate = NamespaceMutable
+
 // Node defines model for Node.
 type Node struct {
 	// Architecture CPU architecture. Open-ended; common values: amd64, arm64, ppc64le, s390x.
@@ -244,6 +309,12 @@ type Cursor = string
 // Limit defines model for Limit.
 type Limit = int
 
+// NamespaceClusterIdFilter defines model for NamespaceClusterIdFilter.
+type NamespaceClusterIdFilter = openapi_types.UUID
+
+// NamespaceId defines model for NamespaceId.
+type NamespaceId = openapi_types.UUID
+
 // NodeClusterIdFilter defines model for NodeClusterIdFilter.
 type NodeClusterIdFilter = openapi_types.UUID
 
@@ -274,6 +345,18 @@ type ListClustersParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// ListNamespacesParams defines parameters for ListNamespaces.
+type ListNamespacesParams struct {
+	// Limit Maximum number of items to return. Server clamps to [1, 200].
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque cursor returned from a previous list response.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// ClusterId Return only namespaces belonging to this cluster.
+	ClusterId *NamespaceClusterIdFilter `form:"cluster_id,omitempty" json:"cluster_id,omitempty"`
+}
+
 // ListNodesParams defines parameters for ListNodes.
 type ListNodesParams struct {
 	// Limit Maximum number of items to return. Server clamps to [1, 200].
@@ -291,6 +374,12 @@ type CreateClusterJSONRequestBody = ClusterCreate
 
 // UpdateClusterApplicationMergePatchPlusJSONRequestBody defines body for UpdateCluster for application/merge-patch+json ContentType.
 type UpdateClusterApplicationMergePatchPlusJSONRequestBody = ClusterUpdate
+
+// CreateNamespaceJSONRequestBody defines body for CreateNamespace for application/json ContentType.
+type CreateNamespaceJSONRequestBody = NamespaceCreate
+
+// UpdateNamespaceApplicationMergePatchPlusJSONRequestBody defines body for UpdateNamespace for application/merge-patch+json ContentType.
+type UpdateNamespaceApplicationMergePatchPlusJSONRequestBody = NamespaceUpdate
 
 // CreateNodeJSONRequestBody defines body for CreateNode for application/json ContentType.
 type CreateNodeJSONRequestBody = NodeCreate
@@ -321,6 +410,21 @@ type ServerInterface interface {
 	// Update mutable fields of a cluster
 	// (PATCH /v1/clusters/{id})
 	UpdateCluster(w http.ResponseWriter, r *http.Request, id ClusterId)
+	// List namespaces
+	// (GET /v1/namespaces)
+	ListNamespaces(w http.ResponseWriter, r *http.Request, params ListNamespacesParams)
+	// Register a namespace
+	// (POST /v1/namespaces)
+	CreateNamespace(w http.ResponseWriter, r *http.Request)
+	// Delete a namespace
+	// (DELETE /v1/namespaces/{id})
+	DeleteNamespace(w http.ResponseWriter, r *http.Request, id NamespaceId)
+	// Get a namespace
+	// (GET /v1/namespaces/{id})
+	GetNamespace(w http.ResponseWriter, r *http.Request, id NamespaceId)
+	// Update mutable fields of a namespace
+	// (PATCH /v1/namespaces/{id})
+	UpdateNamespace(w http.ResponseWriter, r *http.Request, id NamespaceId)
 	// List nodes
 	// (GET /v1/nodes)
 	ListNodes(w http.ResponseWriter, r *http.Request, params ListNodesParams)
@@ -520,6 +624,168 @@ func (siw *ServerInterfaceWrapper) UpdateCluster(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.UpdateCluster(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListNamespaces operation middleware
+func (siw *ServerInterfaceWrapper) ListNamespaces(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{"read"})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListNamespacesParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "cluster_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cluster_id", r.URL.Query(), &params.ClusterId, runtime.BindQueryParameterOptions{Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cluster_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListNamespaces(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateNamespace operation middleware
+func (siw *ServerInterfaceWrapper) CreateNamespace(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{"write"})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateNamespace(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteNamespace operation middleware
+func (siw *ServerInterfaceWrapper) DeleteNamespace(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id NamespaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{"delete"})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteNamespace(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetNamespace operation middleware
+func (siw *ServerInterfaceWrapper) GetNamespace(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id NamespaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{"read"})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetNamespace(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateNamespace operation middleware
+func (siw *ServerInterfaceWrapper) UpdateNamespace(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id NamespaceId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{"write"})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateNamespace(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -818,6 +1084,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/clusters/{id}", wrapper.DeleteCluster)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/clusters/{id}", wrapper.GetCluster)
 	m.HandleFunc("PATCH "+options.BaseURL+"/v1/clusters/{id}", wrapper.UpdateCluster)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces", wrapper.ListNamespaces)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/namespaces", wrapper.CreateNamespace)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/namespaces/{id}", wrapper.DeleteNamespace)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/namespaces/{id}", wrapper.GetNamespace)
+	m.HandleFunc("PATCH "+options.BaseURL+"/v1/namespaces/{id}", wrapper.UpdateNamespace)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/nodes", wrapper.ListNodes)
 	m.HandleFunc("POST "+options.BaseURL+"/v1/nodes", wrapper.CreateNode)
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/nodes/{id}", wrapper.DeleteNode)
@@ -830,61 +1101,67 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
-	"ggGml9N/BwAA//8pD5mRLzsAAA==",
+	"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",
+	"//8ULbQij1EAAA==",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

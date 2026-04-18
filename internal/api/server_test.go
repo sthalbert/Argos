@@ -18,13 +18,15 @@ import (
 // memStore is an in-memory api.Store implementation used to exercise the
 // HTTP handlers without a PostgreSQL dependency.
 type memStore struct {
-	mu       sync.Mutex
-	byID     map[uuid.UUID]Cluster
-	byName   map[string]uuid.UUID
+	mu            sync.Mutex
+	byID          map[uuid.UUID]Cluster
+	byName        map[string]uuid.UUID
 	nodesByID     map[uuid.UUID]Node
 	nodesByNatKey map[string]uuid.UUID // "<cluster_id>/<name>" -> node id
-	pingErr  error
-	createdN int
+	nsByID        map[uuid.UUID]Namespace
+	nsByNatKey    map[string]uuid.UUID // "<cluster_id>/<name>" -> namespace id
+	pingErr       error
+	createdN      int
 }
 
 func newMemStore() *memStore {
@@ -33,10 +35,16 @@ func newMemStore() *memStore {
 		byName:        make(map[string]uuid.UUID),
 		nodesByID:     make(map[uuid.UUID]Node),
 		nodesByNatKey: make(map[string]uuid.UUID),
+		nsByID:        make(map[uuid.UUID]Namespace),
+		nsByNatKey:    make(map[string]uuid.UUID),
 	}
 }
 
 func nodeNatKey(clusterID uuid.UUID, name string) string {
+	return clusterID.String() + "/" + name
+}
+
+func nsNatKey(clusterID uuid.UUID, name string) string {
 	return clusterID.String() + "/" + name
 }
 
@@ -238,6 +246,133 @@ func (m *memStore) DeleteNode(_ context.Context, id uuid.UUID) error {
 	delete(m.nodesByID, id)
 	delete(m.nodesByNatKey, nodeNatKey(n.ClusterId, n.Name))
 	return nil
+}
+
+func (m *memStore) CreateNamespace(_ context.Context, in NamespaceCreate) (Namespace, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.byID[in.ClusterId]; !ok {
+		return Namespace{}, ErrNotFound
+	}
+	key := nsNatKey(in.ClusterId, in.Name)
+	if _, dup := m.nsByNatKey[key]; dup {
+		return Namespace{}, fmt.Errorf("duplicate namespace: %w", ErrConflict)
+	}
+	id := uuid.New()
+	now := time.Now().UTC().Add(time.Duration(m.createdN) * time.Nanosecond)
+	m.createdN++
+	n := Namespace{
+		Id:          &id,
+		ClusterId:   in.ClusterId,
+		Name:        in.Name,
+		DisplayName: in.DisplayName,
+		Phase:       in.Phase,
+		Labels:      in.Labels,
+		CreatedAt:   &now,
+		UpdatedAt:   &now,
+	}
+	m.nsByID[id] = n
+	m.nsByNatKey[key] = id
+	return n, nil
+}
+
+func (m *memStore) GetNamespace(_ context.Context, id uuid.UUID) (Namespace, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.nsByID[id]
+	if !ok {
+		return Namespace{}, ErrNotFound
+	}
+	return n, nil
+}
+
+func (m *memStore) ListNamespaces(_ context.Context, clusterID *uuid.UUID, limit int, _ string) ([]Namespace, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 50
+	}
+	out := make([]Namespace, 0, len(m.nsByID))
+	for _, n := range m.nsByID {
+		if clusterID != nil && n.ClusterId != *clusterID {
+			continue
+		}
+		out = append(out, n)
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, "", nil
+}
+
+func (m *memStore) UpdateNamespace(_ context.Context, id uuid.UUID, in NamespaceUpdate) (Namespace, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.nsByID[id]
+	if !ok {
+		return Namespace{}, ErrNotFound
+	}
+	if in.DisplayName != nil {
+		n.DisplayName = in.DisplayName
+	}
+	if in.Phase != nil {
+		n.Phase = in.Phase
+	}
+	if in.Labels != nil {
+		n.Labels = in.Labels
+	}
+	now := time.Now().UTC()
+	n.UpdatedAt = &now
+	m.nsByID[id] = n
+	return n, nil
+}
+
+func (m *memStore) DeleteNamespace(_ context.Context, id uuid.UUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.nsByID[id]
+	if !ok {
+		return ErrNotFound
+	}
+	delete(m.nsByID, id)
+	delete(m.nsByNatKey, nsNatKey(n.ClusterId, n.Name))
+	return nil
+}
+
+func (m *memStore) UpsertNamespace(_ context.Context, in NamespaceCreate) (Namespace, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.byID[in.ClusterId]; !ok {
+		return Namespace{}, ErrNotFound
+	}
+	key := nsNatKey(in.ClusterId, in.Name)
+	now := time.Now().UTC().Add(time.Duration(m.createdN) * time.Nanosecond)
+	m.createdN++
+
+	if existingID, exists := m.nsByNatKey[key]; exists {
+		n := m.nsByID[existingID]
+		n.DisplayName = in.DisplayName
+		n.Phase = in.Phase
+		n.Labels = in.Labels
+		n.UpdatedAt = &now
+		m.nsByID[existingID] = n
+		return n, nil
+	}
+
+	id := uuid.New()
+	n := Namespace{
+		Id:          &id,
+		ClusterId:   in.ClusterId,
+		Name:        in.Name,
+		DisplayName: in.DisplayName,
+		Phase:       in.Phase,
+		Labels:      in.Labels,
+		CreatedAt:   &now,
+		UpdatedAt:   &now,
+	}
+	m.nsByID[id] = n
+	m.nsByNatKey[key] = id
+	return n, nil
 }
 
 func (m *memStore) UpsertNode(_ context.Context, in NodeCreate) (Node, error) {
@@ -519,6 +654,100 @@ func TestNodeCRUD(t *testing.T) {
 
 	// Delete again → 404
 	del2 := do(h, http.MethodDelete, nodeURL, "")
+	if del2.Code != http.StatusNotFound {
+		t.Errorf("second delete status=%d", del2.Code)
+	}
+}
+
+func TestNamespaceCRUD(t *testing.T) {
+	t.Parallel()
+	store := newMemStore()
+	h := newTestHandler(t, store)
+
+	clusterResp := do(h, http.MethodPost, "/v1/clusters", `{"name":"prod-ns"}`)
+	if clusterResp.Code != http.StatusCreated {
+		t.Fatalf("seed cluster: status=%d body=%q", clusterResp.Code, clusterResp.Body.String())
+	}
+	var cluster Cluster
+	if err := json.Unmarshal(clusterResp.Body.Bytes(), &cluster); err != nil {
+		t.Fatalf("decode cluster: %v", err)
+	}
+	clusterIDStr := cluster.Id.String()
+
+	createBody := fmt.Sprintf(`{"cluster_id":%q,"name":"kube-system","phase":"Active"}`, clusterIDStr)
+	create := do(h, http.MethodPost, "/v1/namespaces", createBody)
+	if create.Code != http.StatusCreated {
+		t.Fatalf("create ns: status=%d body=%q", create.Code, create.Body.String())
+	}
+	if loc := create.Header().Get("Location"); !strings.HasPrefix(loc, "/v1/namespaces/") {
+		t.Errorf("Location=%q", loc)
+	}
+	var ns Namespace
+	if err := json.Unmarshal(create.Body.Bytes(), &ns); err != nil {
+		t.Fatalf("decode ns: %v", err)
+	}
+	if ns.Id == nil {
+		t.Fatal("ns.Id nil")
+	}
+
+	dup := do(h, http.MethodPost, "/v1/namespaces", createBody)
+	if dup.Code != http.StatusConflict {
+		t.Errorf("duplicate namespace status=%d", dup.Code)
+	}
+
+	missing := do(h, http.MethodPost, "/v1/namespaces", fmt.Sprintf(`{"cluster_id":%q,"name":"x"}`, uuid.New().String()))
+	if missing.Code != http.StatusNotFound {
+		t.Errorf("missing cluster create status=%d", missing.Code)
+	}
+
+	nsURL := "/v1/namespaces/" + ns.Id.String()
+
+	get := do(h, http.MethodGet, nsURL, "")
+	if get.Code != http.StatusOK {
+		t.Fatalf("get ns status=%d body=%q", get.Code, get.Body.String())
+	}
+
+	patch := do(h, http.MethodPatch, nsURL, `{"phase":"Terminating"}`)
+	if patch.Code != http.StatusOK {
+		t.Fatalf("patch status=%d body=%q", patch.Code, patch.Body.String())
+	}
+	var patched Namespace
+	if err := json.Unmarshal(patch.Body.Bytes(), &patched); err != nil {
+		t.Fatalf("decode patch: %v", err)
+	}
+	if patched.Phase == nil || *patched.Phase != "Terminating" {
+		t.Errorf("phase=%v", patched.Phase)
+	}
+
+	list := do(h, http.MethodGet, "/v1/namespaces", "")
+	if list.Code != http.StatusOK {
+		t.Fatalf("list status=%d", list.Code)
+	}
+	var page NamespaceList
+	if err := json.Unmarshal(list.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(page.Items) != 1 {
+		t.Errorf("list len=%d", len(page.Items))
+	}
+
+	filtered := do(h, http.MethodGet, "/v1/namespaces?cluster_id="+clusterIDStr, "")
+	if filtered.Code != http.StatusOK {
+		t.Fatalf("filtered list status=%d", filtered.Code)
+	}
+	if err := json.Unmarshal(filtered.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode filtered list: %v", err)
+	}
+	if len(page.Items) != 1 {
+		t.Errorf("filtered list len=%d", len(page.Items))
+	}
+
+	del := do(h, http.MethodDelete, nsURL, "")
+	if del.Code != http.StatusNoContent {
+		t.Errorf("delete status=%d", del.Code)
+	}
+
+	del2 := do(h, http.MethodDelete, nsURL, "")
 	if del2.Code != http.StatusNotFound {
 		t.Errorf("second delete status=%d", del2.Code)
 	}

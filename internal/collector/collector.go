@@ -26,6 +26,13 @@ type NodeInfo struct {
 	Labels         map[string]string
 }
 
+// NamespaceInfo is the subset of a Kubernetes Namespace the collector consumes.
+type NamespaceInfo struct {
+	Name   string
+	Phase  string
+	Labels map[string]string
+}
+
 // VersionFetcher returns the Kubernetes API server version for the cluster
 // it was configured against (typically via kubeconfig or in-cluster config).
 type VersionFetcher interface {
@@ -37,10 +44,16 @@ type NodeLister interface {
 	ListNodes(ctx context.Context) ([]NodeInfo, error)
 }
 
+// NamespaceLister returns every Namespace visible to the configured kubeconfig.
+type NamespaceLister interface {
+	ListNamespaces(ctx context.Context) ([]NamespaceInfo, error)
+}
+
 // KubeSource is the composite contract the Collector consumes.
 type KubeSource interface {
 	VersionFetcher
 	NodeLister
+	NamespaceLister
 }
 
 // cmdbStore is the subset of api.Store the collector consumes.
@@ -48,6 +61,7 @@ type cmdbStore interface {
 	ListClusters(ctx context.Context, limit int, cursor string) ([]api.Cluster, string, error)
 	UpdateCluster(ctx context.Context, id uuid.UUID, in api.ClusterUpdate) (api.Cluster, error)
 	UpsertNode(ctx context.Context, in api.NodeCreate) (api.Node, error)
+	UpsertNamespace(ctx context.Context, in api.NamespaceCreate) (api.Namespace, error)
 }
 
 // Collector polls a KubeSource and reconciles the results into the CMDB
@@ -129,6 +143,7 @@ func (c *Collector) poll(parent context.Context) {
 	}
 
 	c.ingestNodes(ctx, *cluster.Id)
+	c.ingestNamespaces(ctx, *cluster.Id)
 }
 
 // ingestNodes lists nodes from the kube source and upserts each into the
@@ -162,6 +177,36 @@ func (c *Collector) ingestNodes(ctx context.Context, clusterID uuid.UUID) {
 		upserted++
 	}
 	slog.Info("collector: ingested nodes", "upserted", upserted, "failed", failed, "cluster_name", c.clusterName)
+}
+
+// ingestNamespaces lists namespaces from the kube source and upserts each
+// into the store under the given cluster.
+func (c *Collector) ingestNamespaces(ctx context.Context, clusterID uuid.UUID) {
+	namespaces, err := c.source.ListNamespaces(ctx)
+	if err != nil {
+		slog.Warn("collector: list namespaces failed", "error", err, "cluster_name", c.clusterName)
+		return
+	}
+
+	var upserted, failed int
+	for _, ns := range namespaces {
+		in := api.NamespaceCreate{
+			ClusterId: clusterID,
+			Name:      ns.Name,
+			Phase:     ptrIfNonEmpty(ns.Phase),
+		}
+		if len(ns.Labels) > 0 {
+			labels := ns.Labels
+			in.Labels = &labels
+		}
+		if _, err := c.store.UpsertNamespace(ctx, in); err != nil {
+			slog.Warn("collector: upsert namespace failed", "error", err, "namespace", ns.Name, "cluster_name", c.clusterName)
+			failed++
+			continue
+		}
+		upserted++
+	}
+	slog.Info("collector: ingested namespaces", "upserted", upserted, "failed", failed, "cluster_name", c.clusterName)
 }
 
 func ptrIfNonEmpty(s string) *string {

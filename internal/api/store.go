@@ -62,4 +62,26 @@ type Store interface {
 	// returned Node always reflects the post-operation state. Returns
 	// ErrNotFound if the parent cluster does not exist.
 	UpsertNode(ctx context.Context, in NodeCreate) (Node, error)
+
+	// CreateNamespace inserts a new namespace. Returns ErrNotFound when the
+	// parent cluster does not exist; ErrConflict when (cluster_id, name)
+	// already has a namespace.
+	CreateNamespace(ctx context.Context, in NamespaceCreate) (Namespace, error)
+
+	// GetNamespace fetches a namespace by id. Returns ErrNotFound if absent.
+	GetNamespace(ctx context.Context, id uuid.UUID) (Namespace, error)
+
+	// ListNamespaces returns up to limit namespaces after the given opaque
+	// cursor. When clusterID is non-nil, results are filtered to that cluster.
+	ListNamespaces(ctx context.Context, clusterID *uuid.UUID, limit int, cursor string) (items []Namespace, nextCursor string, err error)
+
+	// UpdateNamespace applies the merge-patch fields set in in. Returns
+	// ErrNotFound if the namespace does not exist.
+	UpdateNamespace(ctx context.Context, id uuid.UUID, in NamespaceUpdate) (Namespace, error)
+
+	// DeleteNamespace removes a namespace by id. Returns ErrNotFound if absent.
+	DeleteNamespace(ctx context.Context, id uuid.UUID) error
+
+	// UpsertNamespace mirrors UpsertNode for namespaces.
+	UpsertNamespace(ctx context.Context, in NamespaceCreate) (Namespace, error)
 }

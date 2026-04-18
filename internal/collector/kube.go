@@ -83,3 +83,20 @@ func (k *KubeClient) ListNodes(ctx context.Context) ([]NodeInfo, error) {
 	}
 	return out, nil
 }
+
+// ListNamespaces returns every Namespace visible through the configured kubeconfig.
+func (k *KubeClient) ListNamespaces(ctx context.Context) ([]NamespaceInfo, error) {
+	list, err := k.clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list namespaces: %w", err)
+	}
+	out := make([]NamespaceInfo, 0, len(list.Items))
+	for _, n := range list.Items {
+		out = append(out, NamespaceInfo{
+			Name:   n.Name,
+			Phase:  string(n.Status.Phase),
+			Labels: n.Labels,
+		})
+	}
+	return out, nil
+}

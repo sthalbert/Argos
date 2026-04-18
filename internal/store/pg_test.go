@@ -221,6 +221,100 @@ func TestPGUpsertNode(t *testing.T) {
 	}
 }
 
+func TestPGNamespaceCRUD(t *testing.T) {
+	pg := newTestPG(t)
+	ctx := context.Background()
+
+	cluster, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: "ns-test"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+
+	phase := "Active"
+	ns, err := pg.CreateNamespace(ctx, api.NamespaceCreate{
+		ClusterId: *cluster.Id,
+		Name:      "kube-system",
+		Phase:     &phase,
+	})
+	if err != nil {
+		t.Fatalf("create ns: %v", err)
+	}
+
+	if _, err := pg.CreateNamespace(ctx, api.NamespaceCreate{ClusterId: *cluster.Id, Name: "kube-system"}); !errors.Is(err, api.ErrConflict) {
+		t.Errorf("duplicate should be ErrConflict, got %v", err)
+	}
+	if _, err := pg.CreateNamespace(ctx, api.NamespaceCreate{ClusterId: uuid.New(), Name: "x"}); !errors.Is(err, api.ErrNotFound) {
+		t.Errorf("unknown cluster should be ErrNotFound, got %v", err)
+	}
+
+	newPhase := "Terminating"
+	updated, err := pg.UpdateNamespace(ctx, *ns.Id, api.NamespaceUpdate{Phase: &newPhase})
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if updated.Phase == nil || *updated.Phase != newPhase {
+		t.Errorf("phase=%v", updated.Phase)
+	}
+
+	items, _, err := pg.ListNamespaces(ctx, cluster.Id, 10, "")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(items) != 1 {
+		t.Errorf("list len=%d", len(items))
+	}
+
+	// Cascade: deleting cluster removes namespaces.
+	if err := pg.DeleteCluster(ctx, *cluster.Id); err != nil {
+		t.Fatalf("delete cluster: %v", err)
+	}
+	if _, err := pg.GetNamespace(ctx, *ns.Id); !errors.Is(err, api.ErrNotFound) {
+		t.Errorf("namespace should have cascaded, got %v", err)
+	}
+}
+
+func TestPGUpsertNamespace(t *testing.T) {
+	pg := newTestPG(t)
+	ctx := context.Background()
+
+	cluster, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: "ns-upsert"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+
+	phaseA := "Active"
+	first, err := pg.UpsertNamespace(ctx, api.NamespaceCreate{
+		ClusterId: *cluster.Id,
+		Name:      "default",
+		Phase:     &phaseA,
+	})
+	if err != nil {
+		t.Fatalf("first upsert: %v", err)
+	}
+
+	phaseB := "Terminating"
+	second, err := pg.UpsertNamespace(ctx, api.NamespaceCreate{
+		ClusterId: *cluster.Id,
+		Name:      "default",
+		Phase:     &phaseB,
+	})
+	if err != nil {
+		t.Fatalf("second upsert: %v", err)
+	}
+	if *second.Id != *first.Id {
+		t.Errorf("id changed across upsert: first=%v second=%v", *first.Id, *second.Id)
+	}
+	if second.Phase == nil || *second.Phase != phaseB {
+		t.Errorf("phase=%v", second.Phase)
+	}
+	if !second.CreatedAt.Equal(*first.CreatedAt) {
+		t.Errorf("created_at changed: first=%v second=%v", first.CreatedAt, second.CreatedAt)
+	}
+	if !second.UpdatedAt.After(*first.UpdatedAt) {
+		t.Errorf("updated_at did not advance: first=%v second=%v", first.UpdatedAt, second.UpdatedAt)
+	}
+}
+
 func TestPGListPagination(t *testing.T) {
 	pg := newTestPG(t)
 	ctx := context.Background()

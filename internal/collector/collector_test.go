@@ -15,10 +15,12 @@ import (
 
 // fakeSource implements KubeSource with fixed results.
 type fakeSource struct {
-	version     string
-	versionErr  error
-	nodes       []NodeInfo
-	listNodeErr error
+	version          string
+	versionErr       error
+	nodes            []NodeInfo
+	listNodeErr      error
+	namespaces       []NamespaceInfo
+	listNamespaceErr error
 }
 
 func (f *fakeSource) ServerVersion(_ context.Context) (string, error) {
@@ -29,26 +31,36 @@ func (f *fakeSource) ListNodes(_ context.Context) ([]NodeInfo, error) {
 	return f.nodes, f.listNodeErr
 }
 
+func (f *fakeSource) ListNamespaces(_ context.Context) ([]NamespaceInfo, error) {
+	return f.namespaces, f.listNamespaceErr
+}
+
 type recordedUpdate struct {
 	id    uuid.UUID
 	patch api.ClusterUpdate
 }
 
 type fakeStore struct {
-	mu           sync.Mutex
-	clusters     []api.Cluster
-	updates      []recordedUpdate
-	upsertedNode []api.NodeCreate
-	listErr      error
-	updateErr    error
-	upsertErr    error
+	mu               sync.Mutex
+	clusters         []api.Cluster
+	updates          []recordedUpdate
+	upsertedNode     []api.NodeCreate
+	upsertedNS       []api.NamespaceCreate
+	listErr          error
+	updateErr        error
+	upsertErr        error
+	upsertNSErr      error
 	// nodeState mirrors per-(cluster_id, name) upsert history so tests can
 	// assert idempotent behaviour.
 	nodeState map[string]int // key: cluster_id/name, value: upsert count
+	nsState   map[string]int
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{nodeState: make(map[string]int)}
+	return &fakeStore{
+		nodeState: make(map[string]int),
+		nsState:   make(map[string]int),
+	}
 }
 
 func (s *fakeStore) ListClusters(_ context.Context, _ int, _ string) ([]api.Cluster, string, error) {
@@ -95,6 +107,24 @@ func (s *fakeStore) UpsertNode(_ context.Context, in api.NodeCreate) (api.Node, 
 		ClusterId:      in.ClusterId,
 		Name:           in.Name,
 		KubeletVersion: in.KubeletVersion,
+	}, nil
+}
+
+func (s *fakeStore) UpsertNamespace(_ context.Context, in api.NamespaceCreate) (api.Namespace, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.upsertNSErr != nil {
+		return api.Namespace{}, s.upsertNSErr
+	}
+	s.upsertedNS = append(s.upsertedNS, in)
+	key := in.ClusterId.String() + "/" + in.Name
+	s.nsState[key]++
+	id := uuid.New()
+	return api.Namespace{
+		Id:        &id,
+		ClusterId: in.ClusterId,
+		Name:      in.Name,
+		Phase:     in.Phase,
 	}, nil
 }
 
@@ -282,6 +312,52 @@ func TestPollSkipsNodeIngestionOnListNodesError(t *testing.T) {
 
 	if len(store.upsertedNode) != 0 {
 		t.Errorf("expected no node upserts when ListNodes errors; got %d", len(store.upsertedNode))
+	}
+}
+
+func TestPollIngestsNamespaces(t *testing.T) {
+	t.Parallel()
+	id := uuid.New()
+	store := newFakeStore()
+	store.clusters = []api.Cluster{{Id: &id, Name: "prod"}}
+
+	source := &fakeSource{
+		version: "v1.29.5",
+		namespaces: []NamespaceInfo{
+			{Name: "default", Phase: "Active"},
+			{Name: "kube-system", Phase: "Active", Labels: map[string]string{"role": "system"}},
+		},
+	}
+	c := New(store, source, "prod", time.Minute, time.Second)
+
+	c.poll(context.Background())
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.upsertedNS) != 2 {
+		t.Fatalf("upserted=%d, want 2", len(store.upsertedNS))
+	}
+	if store.upsertedNS[1].Labels == nil || (*store.upsertedNS[1].Labels)["role"] != "system" {
+		t.Errorf("kube-system labels not round-tripped: %v", store.upsertedNS[1].Labels)
+	}
+}
+
+func TestPollSkipsNamespaceIngestionOnListError(t *testing.T) {
+	t.Parallel()
+	id := uuid.New()
+	store := newFakeStore()
+	store.clusters = []api.Cluster{{Id: &id, Name: "prod"}}
+
+	source := &fakeSource{
+		version:          "v1.29.5",
+		listNamespaceErr: errors.New("kube down"),
+	}
+	c := New(store, source, "prod", time.Minute, time.Second)
+
+	c.poll(context.Background())
+
+	if len(store.upsertedNS) != 0 {
+		t.Errorf("expected no namespace upserts on list error; got %d", len(store.upsertedNS))
 	}
 }
 
