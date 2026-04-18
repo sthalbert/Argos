@@ -401,6 +401,7 @@ func (m *memStore) CreatePod(_ context.Context, in PodCreate) (Pod, error) {
 		Phase:       in.Phase,
 		NodeName:    in.NodeName,
 		PodIp:       in.PodIp,
+		Containers:  in.Containers,
 		Labels:      in.Labels,
 		CreatedAt:   &now,
 		UpdatedAt:   &now,
@@ -455,6 +456,9 @@ func (m *memStore) UpdatePod(_ context.Context, id uuid.UUID, in PodUpdate) (Pod
 	if in.PodIp != nil {
 		p.PodIp = in.PodIp
 	}
+	if in.Containers != nil {
+		p.Containers = in.Containers
+	}
 	if in.Labels != nil {
 		p.Labels = in.Labels
 	}
@@ -491,6 +495,7 @@ func (m *memStore) UpsertPod(_ context.Context, in PodCreate) (Pod, error) {
 		p.Phase = in.Phase
 		p.NodeName = in.NodeName
 		p.PodIp = in.PodIp
+		p.Containers = in.Containers
 		p.Labels = in.Labels
 		p.UpdatedAt = &now
 		m.podsByID[existingID] = p
@@ -505,6 +510,7 @@ func (m *memStore) UpsertPod(_ context.Context, in PodCreate) (Pod, error) {
 		Phase:       in.Phase,
 		NodeName:    in.NodeName,
 		PodIp:       in.PodIp,
+		Containers:  in.Containers,
 		Labels:      in.Labels,
 		CreatedAt:   &now,
 		UpdatedAt:   &now,
@@ -556,6 +562,7 @@ func (m *memStore) CreateWorkload(_ context.Context, in WorkloadCreate) (Workloa
 		Name:          in.Name,
 		Replicas:      in.Replicas,
 		ReadyReplicas: in.ReadyReplicas,
+		Containers:    in.Containers,
 		Labels:        in.Labels,
 		Spec:          in.Spec,
 		CreatedAt:     &now,
@@ -611,6 +618,9 @@ func (m *memStore) UpdateWorkload(_ context.Context, id uuid.UUID, in WorkloadUp
 	if in.ReadyReplicas != nil {
 		wl.ReadyReplicas = in.ReadyReplicas
 	}
+	if in.Containers != nil {
+		wl.Containers = in.Containers
+	}
 	if in.Labels != nil {
 		wl.Labels = in.Labels
 	}
@@ -649,6 +659,7 @@ func (m *memStore) UpsertWorkload(_ context.Context, in WorkloadCreate) (Workloa
 		wl := m.workloadsByID[existingID]
 		wl.Replicas = in.Replicas
 		wl.ReadyReplicas = in.ReadyReplicas
+		wl.Containers = in.Containers
 		wl.Labels = in.Labels
 		wl.Spec = in.Spec
 		wl.UpdatedAt = &now
@@ -664,6 +675,7 @@ func (m *memStore) UpsertWorkload(_ context.Context, in WorkloadCreate) (Workloa
 		Name:          in.Name,
 		Replicas:      in.Replicas,
 		ReadyReplicas: in.ReadyReplicas,
+		Containers:    in.Containers,
 		Labels:        in.Labels,
 		Spec:          in.Spec,
 		CreatedAt:     &now,

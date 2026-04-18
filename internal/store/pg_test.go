@@ -744,6 +744,73 @@ func TestPGUpsertServiceAndDeleteNotIn(t *testing.T) {
 	}
 }
 
+// TestPGPodAndWorkloadContainersRoundTrip verifies the new containers JSONB
+// column survives an upsert + read cycle on both Pod and Workload. Each entity
+// type writes its own subset of fields into the generic map: Pod has
+// image_id from containerStatuses; Workload template doesn't.
+func TestPGPodAndWorkloadContainersRoundTrip(t *testing.T) {
+	pg := newTestPG(t)
+	ctx := context.Background()
+
+	cluster, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: "container-round-trip"})
+	if err != nil {
+		t.Fatalf("cluster: %v", err)
+	}
+	ns, err := pg.CreateNamespace(ctx, api.NamespaceCreate{ClusterId: *cluster.Id, Name: "apps"})
+	if err != nil {
+		t.Fatalf("namespace: %v", err)
+	}
+
+	podContainers := api.ContainerList{
+		{"name": "app", "image": "nginx:1.25", "image_id": "docker.io/library/nginx@sha256:abc", "init": false},
+		{"name": "migrate", "image": "busybox:1.36", "init": true},
+	}
+	storedPod, err := pg.UpsertPod(ctx, api.PodCreate{
+		NamespaceId: *ns.Id,
+		Name:        "web-0",
+		Containers:  &podContainers,
+	})
+	if err != nil {
+		t.Fatalf("upsert pod: %v", err)
+	}
+	got, err := pg.GetPod(ctx, *storedPod.Id)
+	if err != nil {
+		t.Fatalf("get pod: %v", err)
+	}
+	if got.Containers == nil || len(*got.Containers) != 2 {
+		t.Fatalf("pod containers after round-trip = %v, want 2 entries", got.Containers)
+	}
+	if (*got.Containers)[0]["image"] != "nginx:1.25" {
+		t.Errorf("first container image = %v, want nginx:1.25", (*got.Containers)[0]["image"])
+	}
+	if (*got.Containers)[1]["init"] != true {
+		t.Errorf("second container init = %v, want true", (*got.Containers)[1]["init"])
+	}
+
+	wlContainers := api.ContainerList{
+		{"name": "app", "image": "nginx:1.25", "init": false},
+	}
+	storedWL, err := pg.UpsertWorkload(ctx, api.WorkloadCreate{
+		NamespaceId: *ns.Id,
+		Kind:        api.Deployment,
+		Name:        "web",
+		Containers:  &wlContainers,
+	})
+	if err != nil {
+		t.Fatalf("upsert workload: %v", err)
+	}
+	gotWL, err := pg.GetWorkload(ctx, *storedWL.Id)
+	if err != nil {
+		t.Fatalf("get workload: %v", err)
+	}
+	if gotWL.Containers == nil || len(*gotWL.Containers) != 1 {
+		t.Fatalf("workload containers after round-trip = %v", gotWL.Containers)
+	}
+	if (*gotWL.Containers)[0]["image"] != "nginx:1.25" {
+		t.Errorf("workload container image = %v", (*gotWL.Containers)[0]["image"])
+	}
+}
+
 func TestPGGetClusterByName(t *testing.T) {
 	pg := newTestPG(t)
 	ctx := context.Background()

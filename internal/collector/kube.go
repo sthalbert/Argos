@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -12,6 +13,69 @@ import (
 
 	"github.com/sthalbert/argos/internal/api"
 )
+
+// podContainers flattens the runtime view of a Pod's containers. It prefers
+// containerStatuses (post-schedule, carries image_id digest) and falls back
+// to spec.containers when status isn't populated yet (Pending pods). Init
+// containers are included with init=true.
+func podContainers(p *corev1.Pod) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0,
+		len(p.Status.ContainerStatuses)+len(p.Status.InitContainerStatuses))
+
+	statusIdx := make(map[string]corev1.ContainerStatus, len(p.Status.ContainerStatuses))
+	for _, cs := range p.Status.ContainerStatuses {
+		statusIdx[cs.Name] = cs
+	}
+	initStatusIdx := make(map[string]corev1.ContainerStatus, len(p.Status.InitContainerStatuses))
+	for _, cs := range p.Status.InitContainerStatuses {
+		initStatusIdx[cs.Name] = cs
+	}
+
+	emit := func(name, specImage string, init bool, cs corev1.ContainerStatus, hasStatus bool) {
+		image := specImage
+		var imageID string
+		if hasStatus {
+			if cs.Image != "" {
+				image = cs.Image
+			}
+			imageID = cs.ImageID
+		}
+		entry := map[string]interface{}{
+			"name":  name,
+			"image": image,
+			"init":  init,
+		}
+		if imageID != "" {
+			entry["image_id"] = imageID
+		}
+		out = append(out, entry)
+	}
+
+	for _, c := range p.Spec.Containers {
+		cs, ok := statusIdx[c.Name]
+		emit(c.Name, c.Image, false, cs, ok)
+	}
+	for _, c := range p.Spec.InitContainers {
+		cs, ok := initStatusIdx[c.Name]
+		emit(c.Name, c.Image, true, cs, ok)
+	}
+	return out
+}
+
+// podTemplateContainers flattens a pod template's declared containers.
+// Used by Workload ingestion, where status-resolved image IDs aren't
+// available (those live on the owned Pods).
+func podTemplateContainers(tpl corev1.PodSpec) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(tpl.Containers)+len(tpl.InitContainers))
+	for _, c := range tpl.Containers {
+		out = append(out, map[string]interface{}{"name": c.Name, "image": c.Image, "init": false})
+	}
+	for _, c := range tpl.InitContainers {
+		out = append(out, map[string]interface{}{"name": c.Name, "image": c.Image, "init": true})
+	}
+	return out
+}
+
 
 // netv1Backend flattens a NetworkingV1 IngressBackend into the generic map
 // shape the CMDB persists as JSONB. Returns nil when the backend isn't a
@@ -130,14 +194,16 @@ func (k *KubeClient) ListPods(ctx context.Context) ([]PodInfo, error) {
 		return nil, fmt.Errorf("list pods: %w", err)
 	}
 	out := make([]PodInfo, 0, len(list.Items))
-	for _, p := range list.Items {
+	for i := range list.Items {
+		p := &list.Items[i]
 		out = append(out, PodInfo{
-			Name:      p.Name,
-			Namespace: p.Namespace,
-			Phase:     string(p.Status.Phase),
-			NodeName:  p.Spec.NodeName,
-			PodIP:     p.Status.PodIP,
-			Labels:    p.Labels,
+			Name:       p.Name,
+			Namespace:  p.Namespace,
+			Phase:      string(p.Status.Phase),
+			NodeName:   p.Spec.NodeName,
+			PodIP:      p.Status.PodIP,
+			Containers: podContainers(p),
+			Labels:     p.Labels,
 		})
 	}
 	return out, nil
@@ -255,6 +321,7 @@ func (k *KubeClient) ListWorkloads(ctx context.Context) ([]WorkloadInfo, error) 
 			Kind:          api.Deployment,
 			Replicas:      &replicas,
 			ReadyReplicas: &readyReplicas,
+			Containers:    podTemplateContainers(d.Spec.Template.Spec),
 			Labels:        d.Labels,
 		})
 	}
@@ -272,6 +339,7 @@ func (k *KubeClient) ListWorkloads(ctx context.Context) ([]WorkloadInfo, error) 
 			Kind:          api.StatefulSet,
 			Replicas:      &replicas,
 			ReadyReplicas: &readyReplicas,
+			Containers:    podTemplateContainers(s.Spec.Template.Spec),
 			Labels:        s.Labels,
 		})
 	}
@@ -289,6 +357,7 @@ func (k *KubeClient) ListWorkloads(ctx context.Context) ([]WorkloadInfo, error) 
 			Namespace:     d.Namespace,
 			Kind:          api.DaemonSet,
 			ReadyReplicas: &readyReplicas,
+			Containers:    podTemplateContainers(d.Spec.Template.Spec),
 			Labels:        d.Labels,
 		})
 	}
