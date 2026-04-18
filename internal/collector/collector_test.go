@@ -21,6 +21,8 @@ type fakeSource struct {
 	listNodeErr      error
 	namespaces       []NamespaceInfo
 	listNamespaceErr error
+	pods             []PodInfo
+	listPodErr       error
 }
 
 func (f *fakeSource) ServerVersion(_ context.Context) (string, error) {
@@ -35,6 +37,10 @@ func (f *fakeSource) ListNamespaces(_ context.Context) ([]NamespaceInfo, error) 
 	return f.namespaces, f.listNamespaceErr
 }
 
+func (f *fakeSource) ListPods(_ context.Context) ([]PodInfo, error) {
+	return f.pods, f.listPodErr
+}
+
 type recordedUpdate struct {
 	id    uuid.UUID
 	patch api.ClusterUpdate
@@ -46,20 +52,30 @@ type fakeStore struct {
 	updates          []recordedUpdate
 	upsertedNode     []api.NodeCreate
 	upsertedNS       []api.NamespaceCreate
+	upsertedPod      []api.PodCreate
 	// Existing rows; reconciliation operates against these.
 	existingNodes []api.Node
 	existingNS    []api.Namespace
+	existingPods  []api.Pod
+	// Preset namespace-id assignments. The fake picks an id for each
+	// UpsertNamespace call from here (keyed by cluster_id + name), falling
+	// back to a fresh uuid.New() if absent. Lets tests pin the name -> id
+	// map that flows into ingestPods.
+	nsIDPreset    map[string]uuid.UUID
 	listErr       error
 	updateErr     error
 	upsertErr     error
 	upsertNSErr   error
+	upsertPodErr  error
 	// nodeState mirrors per-(cluster_id, name) upsert history so tests can
 	// assert idempotent behaviour.
 	nodeState map[string]int // key: cluster_id/name, value: upsert count
 	nsState   map[string]int
+	podState  map[string]int // key: namespace_id/name
 	// Reconciliation call log: each entry is the keepNames slice from a call.
 	reconcileNodesCalls []reconcileCall
 	reconcileNSCalls    []reconcileCall
+	reconcilePodsCalls  []reconcileCall
 }
 
 type reconcileCall struct {
@@ -69,8 +85,10 @@ type reconcileCall struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		nodeState: make(map[string]int),
-		nsState:   make(map[string]int),
+		nodeState:  make(map[string]int),
+		nsState:    make(map[string]int),
+		podState:   make(map[string]int),
+		nsIDPreset: make(map[string]uuid.UUID),
 	}
 }
 
@@ -183,13 +201,59 @@ func (s *fakeStore) UpsertNamespace(_ context.Context, in api.NamespaceCreate) (
 	s.upsertedNS = append(s.upsertedNS, in)
 	key := in.ClusterId.String() + "/" + in.Name
 	s.nsState[key]++
-	id := uuid.New()
+	id, preset := s.nsIDPreset[key]
+	if !preset {
+		id = uuid.New()
+	}
 	return api.Namespace{
 		Id:        &id,
 		ClusterId: in.ClusterId,
 		Name:      in.Name,
 		Phase:     in.Phase,
 	}, nil
+}
+
+func (s *fakeStore) UpsertPod(_ context.Context, in api.PodCreate) (api.Pod, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.upsertPodErr != nil {
+		return api.Pod{}, s.upsertPodErr
+	}
+	s.upsertedPod = append(s.upsertedPod, in)
+	key := in.NamespaceId.String() + "/" + in.Name
+	s.podState[key]++
+	id := uuid.New()
+	return api.Pod{
+		Id:          &id,
+		NamespaceId: in.NamespaceId,
+		Name:        in.Name,
+		Phase:       in.Phase,
+	}, nil
+}
+
+func (s *fakeStore) DeletePodsNotIn(_ context.Context, namespaceID uuid.UUID, keepNames []string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reconcilePodsCalls = append(s.reconcilePodsCalls, reconcileCall{clusterID: namespaceID, keep: append([]string(nil), keepNames...)})
+	keep := make(map[string]struct{}, len(keepNames))
+	for _, n := range keepNames {
+		keep[n] = struct{}{}
+	}
+	kept := s.existingPods[:0]
+	var deleted int64
+	for _, p := range s.existingPods {
+		if p.NamespaceId != namespaceID {
+			kept = append(kept, p)
+			continue
+		}
+		if _, ok := keep[p.Name]; ok {
+			kept = append(kept, p)
+			continue
+		}
+		deleted++
+	}
+	s.existingPods = kept
+	return deleted, nil
 }
 
 func TestPollUpdatesVersionWhenChanged(t *testing.T) {
@@ -502,6 +566,158 @@ func TestPollDoesNotReconcileOnListError(t *testing.T) {
 	}
 	if len(store.reconcileNSCalls) != 0 {
 		t.Errorf("namespace reconcile must not run on ListNamespaces error; got %d calls", len(store.reconcileNSCalls))
+	}
+}
+
+func TestPollIngestsPodsWithNamespaceResolution(t *testing.T) {
+	t.Parallel()
+	clusterID := uuid.New()
+	defaultNSID := uuid.New()
+	kubeSystemNSID := uuid.New()
+
+	store := newFakeStore()
+	store.clusters = []api.Cluster{{Id: &clusterID, Name: "prod"}}
+	store.nsIDPreset[clusterID.String()+"/default"] = defaultNSID
+	store.nsIDPreset[clusterID.String()+"/kube-system"] = kubeSystemNSID
+
+	source := &fakeSource{
+		version: "v1.29.5",
+		namespaces: []NamespaceInfo{
+			{Name: "default"},
+			{Name: "kube-system"},
+		},
+		pods: []PodInfo{
+			{Name: "app-1", Namespace: "default", Phase: "Running"},
+			{Name: "coredns-abc", Namespace: "kube-system", Phase: "Running"},
+			{Name: "orphan", Namespace: "deleted-ns"}, // no matching namespace -> skipped
+		},
+	}
+	c := New(store, source, "prod", time.Minute, time.Second, true)
+
+	c.poll(context.Background())
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	if len(store.upsertedPod) != 2 {
+		t.Fatalf("upserted pods=%d, want 2 (orphan must be skipped)", len(store.upsertedPod))
+	}
+	// Each upsert must carry the resolved namespace id, not the K8s name.
+	seen := map[uuid.UUID]string{}
+	for _, up := range store.upsertedPod {
+		seen[up.NamespaceId] = up.Name
+	}
+	if seen[defaultNSID] != "app-1" {
+		t.Errorf("default namespace pod=%q, want app-1", seen[defaultNSID])
+	}
+	if seen[kubeSystemNSID] != "coredns-abc" {
+		t.Errorf("kube-system pod=%q, want coredns-abc", seen[kubeSystemNSID])
+	}
+}
+
+func TestPollPodsReconcilePerNamespace(t *testing.T) {
+	t.Parallel()
+	clusterID := uuid.New()
+	nsID := uuid.New()
+
+	store := newFakeStore()
+	store.clusters = []api.Cluster{{Id: &clusterID, Name: "prod"}}
+	store.nsIDPreset[clusterID.String()+"/default"] = nsID
+
+	// Pre-seed two stored pods; only one is still in the live listing.
+	podA := uuid.New()
+	podStale := uuid.New()
+	store.existingPods = []api.Pod{
+		{Id: &podA, NamespaceId: nsID, Name: "a"},
+		{Id: &podStale, NamespaceId: nsID, Name: "stale"},
+	}
+
+	source := &fakeSource{
+		version:    "v1.29.5",
+		namespaces: []NamespaceInfo{{Name: "default"}},
+		pods:       []PodInfo{{Name: "a", Namespace: "default"}},
+	}
+	c := New(store, source, "prod", time.Minute, time.Second, true)
+
+	c.poll(context.Background())
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.reconcilePodsCalls) == 0 {
+		t.Fatal("expected at least one pod reconcile call")
+	}
+	// Stale pod must be gone; live one kept.
+	if len(store.existingPods) != 1 || store.existingPods[0].Name != "a" {
+		t.Errorf("existingPods=%v, want only 'a'", store.existingPods)
+	}
+}
+
+func TestPollPodsReconcileEmptyNamespace(t *testing.T) {
+	t.Parallel()
+	clusterID := uuid.New()
+	emptyNSID := uuid.New()
+
+	store := newFakeStore()
+	store.clusters = []api.Cluster{{Id: &clusterID, Name: "prod"}}
+	store.nsIDPreset[clusterID.String()+"/default"] = emptyNSID
+	leftover := uuid.New()
+	store.existingPods = []api.Pod{{Id: &leftover, NamespaceId: emptyNSID, Name: "leftover"}}
+
+	// Live namespace exists but reports zero pods — leftover must still be reconciled away.
+	source := &fakeSource{
+		version:    "v1.29.5",
+		namespaces: []NamespaceInfo{{Name: "default"}},
+		pods:       []PodInfo{},
+	}
+	c := New(store, source, "prod", time.Minute, time.Second, true)
+
+	c.poll(context.Background())
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.existingPods) != 0 {
+		t.Errorf("existingPods=%v, want empty for a namespace with no live pods", store.existingPods)
+	}
+}
+
+func TestPollSkipsPodIngestionOnListError(t *testing.T) {
+	t.Parallel()
+	clusterID := uuid.New()
+	store := newFakeStore()
+	store.clusters = []api.Cluster{{Id: &clusterID, Name: "prod"}}
+	source := &fakeSource{
+		version:    "v1.29.5",
+		namespaces: []NamespaceInfo{{Name: "default"}},
+		listPodErr: errors.New("kube down"),
+	}
+	c := New(store, source, "prod", time.Minute, time.Second, true)
+
+	c.poll(context.Background())
+
+	if len(store.upsertedPod) != 0 {
+		t.Errorf("expected no pod upserts on ListPods error; got %d", len(store.upsertedPod))
+	}
+	if len(store.reconcilePodsCalls) != 0 {
+		t.Errorf("expected no pod reconcile on ListPods error; got %d", len(store.reconcilePodsCalls))
+	}
+}
+
+func TestPollSkipsPodIngestionWhenNamespaceListFails(t *testing.T) {
+	t.Parallel()
+	clusterID := uuid.New()
+	store := newFakeStore()
+	store.clusters = []api.Cluster{{Id: &clusterID, Name: "prod"}}
+	source := &fakeSource{
+		version:          "v1.29.5",
+		listNamespaceErr: errors.New("ns down"),
+		pods:             []PodInfo{{Name: "x", Namespace: "default"}},
+	}
+	c := New(store, source, "prod", time.Minute, time.Second, true)
+
+	c.poll(context.Background())
+
+	if len(store.upsertedPod) != 0 {
+		t.Errorf("expected no pod upserts when ListNamespaces fails; got %d", len(store.upsertedPod))
 	}
 }
 

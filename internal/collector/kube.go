@@ -100,3 +100,25 @@ func (k *KubeClient) ListNamespaces(ctx context.Context) ([]NamespaceInfo, error
 	}
 	return out, nil
 }
+
+// ListPods returns every Pod visible through the configured kubeconfig,
+// across all namespaces. Uses the empty-string namespace selector to query
+// pods cluster-wide.
+func (k *KubeClient) ListPods(ctx context.Context) ([]PodInfo, error) {
+	list, err := k.clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list pods: %w", err)
+	}
+	out := make([]PodInfo, 0, len(list.Items))
+	for _, p := range list.Items {
+		out = append(out, PodInfo{
+			Name:      p.Name,
+			Namespace: p.Namespace,
+			Phase:     string(p.Status.Phase),
+			NodeName:  p.Spec.NodeName,
+			PodIP:     p.Status.PodIP,
+			Labels:    p.Labels,
+		})
+	}
+	return out, nil
+}
