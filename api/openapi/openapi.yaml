@@ -28,6 +28,8 @@ tags:
     description: Kubernetes clusters registered in the CMDB.
   - name: nodes
     description: Kubernetes nodes (worker / control-plane machines) within a cluster.
+  - name: namespaces
+    description: Kubernetes namespaces within a cluster.
 
 security:
   - BearerAuth: []
@@ -328,6 +330,137 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /v1/namespaces:
+    get:
+      tags: [namespaces]
+      summary: List namespaces
+      operationId: listNamespaces
+      security:
+        - BearerAuth: [read]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/NamespaceClusterIdFilter'
+      responses:
+        '200':
+          description: Paged list of namespaces.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NamespaceList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags: [namespaces]
+      summary: Register a namespace
+      operationId: createNamespace
+      security:
+        - BearerAuth: [write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NamespaceCreate'
+      responses:
+        '201':
+          description: Namespace created.
+          headers:
+            Location:
+              description: URI of the newly created namespace.
+              schema:
+                type: string
+                format: uri
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Namespace'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /v1/namespaces/{id}:
+    parameters:
+      - $ref: '#/components/parameters/NamespaceId'
+    get:
+      tags: [namespaces]
+      summary: Get a namespace
+      operationId: getNamespace
+      security:
+        - BearerAuth: [read]
+      responses:
+        '200':
+          description: Namespace details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Namespace'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [namespaces]
+      summary: Update mutable fields of a namespace
+      description: |
+        Merge-patch semantics: fields omitted from the body are unchanged.
+        `cluster_id` and `name` are immutable after creation.
+      operationId: updateNamespace
+      security:
+        - BearerAuth: [write]
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/NamespaceUpdate'
+      responses:
+        '200':
+          description: Updated namespace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Namespace'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [namespaces]
+      summary: Delete a namespace
+      operationId: deleteNamespace
+      security:
+        - BearerAuth: [delete]
+      responses:
+        '204':
+          description: Namespace deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
 components:
 
   securitySchemes:
@@ -372,6 +505,24 @@ components:
       in: query
       required: false
       description: Return only nodes belonging to this cluster.
+      schema:
+        type: string
+        format: uuid
+
+    NamespaceId:
+      name: id
+      in: path
+      required: true
+      description: Server-assigned namespace identifier.
+      schema:
+        type: string
+        format: uuid
+
+    NamespaceClusterIdFilter:
+      name: cluster_id
+      in: query
+      required: false
+      description: Return only namespaces belonging to this cluster.
       schema:
         type: string
         format: uuid
@@ -674,6 +825,101 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Node'
+        next_cursor:
+          type: string
+          nullable: true
+          description: |
+            Opaque cursor to pass as `?cursor=` to fetch the next page.
+            Absent or null when no more pages remain.
+
+    NamespaceMutable:
+      description: Fields on a Namespace that clients may set and later update.
+      type: object
+      properties:
+        display_name:
+          type: string
+          maxLength: 256
+          description: Human-friendly label, free-form.
+        phase:
+          type: string
+          maxLength: 32
+          description: |
+            Kubernetes namespace phase as last observed (e.g. "Active", "Terminating").
+            Open-ended to accommodate any additional phases Kubernetes introduces.
+        labels:
+          type: object
+          description: Arbitrary user-supplied string key/value labels.
+          additionalProperties:
+            type: string
+            maxLength: 256
+          maxProperties: 64
+
+    NamespaceCreate:
+      description: Payload to register a new namespace under a cluster.
+      allOf:
+        - $ref: '#/components/schemas/NamespaceMutable'
+        - type: object
+          required: [cluster_id, name]
+          properties:
+            cluster_id:
+              type: string
+              format: uuid
+              description: |
+                Parent cluster id. Immutable after creation; the cluster must
+                already exist or the create returns 404.
+            name:
+              type: string
+              description: |
+                Kubernetes namespace name (DNS-label style). Unique per cluster.
+                Immutable after creation.
+              pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+              minLength: 1
+              maxLength: 63
+
+    NamespaceUpdate:
+      description: |
+        Merge-patch body. Only mutable fields; `cluster_id` and `name` are
+        immutable. Omitted fields are left unchanged.
+      allOf:
+        - $ref: '#/components/schemas/NamespaceMutable'
+
+    Namespace:
+      description: A Kubernetes namespace registered in the CMDB.
+      allOf:
+        - $ref: '#/components/schemas/NamespaceMutable'
+        - type: object
+          required: [id, cluster_id, name, created_at, updated_at]
+          properties:
+            id:
+              type: string
+              format: uuid
+              readOnly: true
+            cluster_id:
+              type: string
+              format: uuid
+            name:
+              type: string
+              pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+              minLength: 1
+              maxLength: 63
+            created_at:
+              type: string
+              format: date-time
+              readOnly: true
+            updated_at:
+              type: string
+              format: date-time
+              readOnly: true
+
+    NamespaceList:
+      description: Paged list of namespaces.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Namespace'
         next_cursor:
           type: string
           nullable: true

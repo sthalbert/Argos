@@ -207,6 +207,92 @@ func (s *Server) DeleteNode(w http.ResponseWriter, r *http.Request, id NodeId) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ListNamespaces returns a paged list of namespaces, optionally filtered by cluster_id.
+func (s *Server) ListNamespaces(w http.ResponseWriter, r *http.Request, params ListNamespacesParams) {
+	limit := 0
+	if params.Limit != nil {
+		limit = *params.Limit
+	}
+	cursor := ""
+	if params.Cursor != nil {
+		cursor = *params.Cursor
+	}
+
+	items, next, err := s.store.ListNamespaces(r.Context(), params.ClusterId, limit, cursor)
+	if err != nil {
+		s.writeStoreError(w, "listNamespaces", err)
+		return
+	}
+
+	resp := NamespaceList{Items: items}
+	if next != "" {
+		resp.NextCursor = &next
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// CreateNamespace registers a new namespace under a cluster.
+func (s *Server) CreateNamespace(w http.ResponseWriter, r *http.Request) {
+	var body NamespaceCreate
+	if err := decodeJSONBody(r, &body); err != nil {
+		writeProblem(w, http.StatusBadRequest, "Invalid request body", err.Error())
+		return
+	}
+	if body.Name == "" {
+		writeProblem(w, http.StatusBadRequest, "Missing field", "field 'name' is required")
+		return
+	}
+	if body.ClusterId == (uuid.UUID{}) {
+		writeProblem(w, http.StatusBadRequest, "Missing field", "field 'cluster_id' is required")
+		return
+	}
+
+	n, err := s.store.CreateNamespace(r.Context(), body)
+	if err != nil {
+		s.writeStoreError(w, "createNamespace", err)
+		return
+	}
+
+	if n.Id != nil {
+		w.Header().Set("Location", "/v1/namespaces/"+n.Id.String())
+	}
+	writeJSON(w, http.StatusCreated, n)
+}
+
+// GetNamespace fetches a namespace by id.
+func (s *Server) GetNamespace(w http.ResponseWriter, r *http.Request, id NamespaceId) {
+	n, err := s.store.GetNamespace(r.Context(), id)
+	if err != nil {
+		s.writeStoreError(w, "getNamespace", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, n)
+}
+
+// UpdateNamespace applies merge-patch updates.
+func (s *Server) UpdateNamespace(w http.ResponseWriter, r *http.Request, id NamespaceId) {
+	var body NamespaceUpdate
+	if err := decodeJSONBody(r, &body); err != nil {
+		writeProblem(w, http.StatusBadRequest, "Invalid request body", err.Error())
+		return
+	}
+	n, err := s.store.UpdateNamespace(r.Context(), id, body)
+	if err != nil {
+		s.writeStoreError(w, "updateNamespace", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, n)
+}
+
+// DeleteNamespace removes a namespace.
+func (s *Server) DeleteNamespace(w http.ResponseWriter, r *http.Request, id NamespaceId) {
+	if err := s.store.DeleteNamespace(r.Context(), id); err != nil {
+		s.writeStoreError(w, "deleteNamespace", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) writeStoreError(w http.ResponseWriter, op string, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
