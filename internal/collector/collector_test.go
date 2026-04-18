@@ -27,6 +27,8 @@ type fakeSource struct {
 	listWorkloadErr  error
 	services         []ServiceInfo
 	listServiceErr   error
+	ingresses        []IngressInfo
+	listIngressErr   error
 }
 
 func (f *fakeSource) ServerVersion(_ context.Context) (string, error) {
@@ -53,6 +55,10 @@ func (f *fakeSource) ListServices(_ context.Context) ([]ServiceInfo, error) {
 	return f.services, f.listServiceErr
 }
 
+func (f *fakeSource) ListIngresses(_ context.Context) ([]IngressInfo, error) {
+	return f.ingresses, f.listIngressErr
+}
+
 type recordedUpdate struct {
 	id    uuid.UUID
 	patch api.ClusterUpdate
@@ -67,12 +73,14 @@ type fakeStore struct {
 	upsertedPod      []api.PodCreate
 	upsertedWorkload []api.WorkloadCreate
 	upsertedService  []api.ServiceCreate
+	upsertedIngress  []api.IngressCreate
 	// Existing rows; reconciliation operates against these.
 	existingNodes     []api.Node
 	existingNS        []api.Namespace
 	existingPods      []api.Pod
 	existingWorkloads []api.Workload
 	existingServices  []api.Service
+	existingIngresses []api.Ingress
 	// Preset namespace-id assignments. The fake picks an id for each
 	// UpsertNamespace call from here (keyed by cluster_id + name), falling
 	// back to a fresh uuid.New() if absent. Lets tests pin the name -> id
@@ -85,6 +93,7 @@ type fakeStore struct {
 	upsertPodErr      error
 	upsertWorkloadErr error
 	upsertServiceErr  error
+	upsertIngressErr  error
 	// nodeState mirrors per-(cluster_id, name) upsert history so tests can
 	// assert idempotent behaviour.
 	nodeState     map[string]int // key: cluster_id/name, value: upsert count
@@ -92,12 +101,14 @@ type fakeStore struct {
 	podState      map[string]int // key: namespace_id/name
 	workloadState map[string]int // key: namespace_id/kind/name
 	serviceState  map[string]int // key: namespace_id/name
+	ingressState  map[string]int // key: namespace_id/name
 	// Reconciliation call log: each entry is the keepNames slice from a call.
 	reconcileNodesCalls     []reconcileCall
 	reconcileNSCalls        []reconcileCall
 	reconcilePodsCalls      []reconcileCall
 	reconcileWorkloadsCalls []reconcileWorkloadCall
 	reconcileServicesCalls  []reconcileCall
+	reconcileIngressesCalls []reconcileCall
 }
 
 type reconcileWorkloadCall struct {
@@ -118,6 +129,7 @@ func newFakeStore() *fakeStore {
 		podState:      make(map[string]int),
 		workloadState: make(map[string]int),
 		serviceState:  make(map[string]int),
+		ingressState:  make(map[string]int),
 		nsIDPreset:    make(map[string]uuid.UUID),
 	}
 }
@@ -302,6 +314,48 @@ func (s *fakeStore) UpsertService(_ context.Context, in api.ServiceCreate) (api.
 		Name:        in.Name,
 		Type:        in.Type,
 	}, nil
+}
+
+func (s *fakeStore) UpsertIngress(_ context.Context, in api.IngressCreate) (api.Ingress, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.upsertIngressErr != nil {
+		return api.Ingress{}, s.upsertIngressErr
+	}
+	s.upsertedIngress = append(s.upsertedIngress, in)
+	key := in.NamespaceId.String() + "/" + in.Name
+	s.ingressState[key]++
+	id := uuid.New()
+	return api.Ingress{
+		Id:          &id,
+		NamespaceId: in.NamespaceId,
+		Name:        in.Name,
+	}, nil
+}
+
+func (s *fakeStore) DeleteIngressesNotIn(_ context.Context, namespaceID uuid.UUID, keepNames []string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reconcileIngressesCalls = append(s.reconcileIngressesCalls, reconcileCall{clusterID: namespaceID, keep: append([]string(nil), keepNames...)})
+	keep := make(map[string]struct{}, len(keepNames))
+	for _, n := range keepNames {
+		keep[n] = struct{}{}
+	}
+	kept := s.existingIngresses[:0]
+	var deleted int64
+	for _, ing := range s.existingIngresses {
+		if ing.NamespaceId != namespaceID {
+			kept = append(kept, ing)
+			continue
+		}
+		if _, ok := keep[ing.Name]; ok {
+			kept = append(kept, ing)
+			continue
+		}
+		deleted++
+	}
+	s.existingIngresses = kept
+	return deleted, nil
 }
 
 func (s *fakeStore) DeleteServicesNotIn(_ context.Context, namespaceID uuid.UUID, keepNames []string) (int64, error) {
@@ -1014,6 +1068,94 @@ func TestPollServicesReconcilePerNamespace(t *testing.T) {
 	defer store.mu.Unlock()
 	if len(store.existingServices) != 1 || store.existingServices[0].Name != "web" {
 		t.Errorf("existingServices=%v, want only 'web'", store.existingServices)
+	}
+}
+
+func TestPollIngestsIngressesWithNamespaceResolution(t *testing.T) {
+	t.Parallel()
+	clusterID := uuid.New()
+	defaultNSID := uuid.New()
+
+	store := newFakeStore()
+	store.clusters = []api.Cluster{{Id: &clusterID, Name: "prod"}}
+	store.nsIDPreset[clusterID.String()+"/default"] = defaultNSID
+
+	source := &fakeSource{
+		version:    "v1.29.5",
+		namespaces: []NamespaceInfo{{Name: "default"}},
+		ingresses: []IngressInfo{
+			{Name: "web", Namespace: "default", IngressClassName: "nginx"},
+			{Name: "orphan", Namespace: "deleted-ns"}, // skipped
+		},
+	}
+	c := New(store, source, "prod", time.Minute, time.Second, true)
+
+	c.poll(context.Background())
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.upsertedIngress) != 1 {
+		t.Fatalf("upserted ingresses=%d, want 1 (orphan must be skipped)", len(store.upsertedIngress))
+	}
+	up := store.upsertedIngress[0]
+	if up.NamespaceId != defaultNSID {
+		t.Errorf("ingress namespace_id=%v, want %v", up.NamespaceId, defaultNSID)
+	}
+	if up.IngressClassName == nil || *up.IngressClassName != "nginx" {
+		t.Errorf("ingress_class_name=%v, want nginx", up.IngressClassName)
+	}
+}
+
+func TestPollIngressesReconcilePerNamespace(t *testing.T) {
+	t.Parallel()
+	clusterID := uuid.New()
+	nsID := uuid.New()
+	live := uuid.New()
+	stale := uuid.New()
+
+	store := newFakeStore()
+	store.clusters = []api.Cluster{{Id: &clusterID, Name: "prod"}}
+	store.nsIDPreset[clusterID.String()+"/default"] = nsID
+	store.existingIngresses = []api.Ingress{
+		{Id: &live, NamespaceId: nsID, Name: "web"},
+		{Id: &stale, NamespaceId: nsID, Name: "stale"},
+	}
+
+	source := &fakeSource{
+		version:    "v1.29.5",
+		namespaces: []NamespaceInfo{{Name: "default"}},
+		ingresses:  []IngressInfo{{Name: "web", Namespace: "default"}},
+	}
+	c := New(store, source, "prod", time.Minute, time.Second, true)
+
+	c.poll(context.Background())
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.existingIngresses) != 1 || store.existingIngresses[0].Name != "web" {
+		t.Errorf("existingIngresses=%v, want only 'web'", store.existingIngresses)
+	}
+}
+
+func TestPollSkipsIngressIngestionOnListError(t *testing.T) {
+	t.Parallel()
+	clusterID := uuid.New()
+	store := newFakeStore()
+	store.clusters = []api.Cluster{{Id: &clusterID, Name: "prod"}}
+	source := &fakeSource{
+		version:        "v1.29.5",
+		namespaces:     []NamespaceInfo{{Name: "default"}},
+		listIngressErr: errors.New("kube down"),
+	}
+	c := New(store, source, "prod", time.Minute, time.Second, true)
+
+	c.poll(context.Background())
+
+	if len(store.upsertedIngress) != 0 {
+		t.Errorf("expected no ingress upserts on ListIngresses error; got %d", len(store.upsertedIngress))
+	}
+	if len(store.reconcileIngressesCalls) != 0 {
+		t.Errorf("expected no ingress reconcile on ListIngresses error; got %d", len(store.reconcileIngressesCalls))
 	}
 }
 

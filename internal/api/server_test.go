@@ -31,6 +31,8 @@ type memStore struct {
 	workloadsByNatKey map[string]uuid.UUID // "<namespace_id>/<kind>/<name>" -> workload id
 	servicesByID      map[uuid.UUID]Service
 	servicesByNatKey  map[string]uuid.UUID // "<namespace_id>/<name>" -> service id
+	ingressesByID     map[uuid.UUID]Ingress
+	ingressesByNatKey map[string]uuid.UUID // "<namespace_id>/<name>" -> ingress id
 	pingErr           error
 	createdN          int
 }
@@ -49,10 +51,16 @@ func newMemStore() *memStore {
 		workloadsByNatKey: make(map[string]uuid.UUID),
 		servicesByID:      make(map[uuid.UUID]Service),
 		servicesByNatKey:  make(map[string]uuid.UUID),
+		ingressesByID:     make(map[uuid.UUID]Ingress),
+		ingressesByNatKey: make(map[string]uuid.UUID),
 	}
 }
 
 func serviceNatKey(namespaceID uuid.UUID, name string) string {
+	return namespaceID.String() + "/" + name
+}
+
+func ingressNatKey(namespaceID uuid.UUID, name string) string {
 	return namespaceID.String() + "/" + name
 }
 
@@ -683,6 +691,159 @@ func (m *memStore) DeleteWorkloadsNotIn(_ context.Context, namespaceID uuid.UUID
 		}
 		delete(m.workloadsByID, id)
 		delete(m.workloadsByNatKey, workloadNatKey(wl.NamespaceId, wl.Kind, wl.Name))
+		deleted++
+	}
+	return deleted, nil
+}
+
+func (m *memStore) CreateIngress(_ context.Context, in IngressCreate) (Ingress, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.nsByID[in.NamespaceId]; !ok {
+		return Ingress{}, ErrNotFound
+	}
+	key := ingressNatKey(in.NamespaceId, in.Name)
+	if _, dup := m.ingressesByNatKey[key]; dup {
+		return Ingress{}, fmt.Errorf("duplicate ingress: %w", ErrConflict)
+	}
+	id := uuid.New()
+	now := time.Now().UTC().Add(time.Duration(m.createdN) * time.Nanosecond)
+	m.createdN++
+	i := Ingress{
+		Id:               &id,
+		NamespaceId:      in.NamespaceId,
+		Name:             in.Name,
+		IngressClassName: in.IngressClassName,
+		Rules:            in.Rules,
+		Tls:              in.Tls,
+		Labels:           in.Labels,
+		CreatedAt:        &now,
+		UpdatedAt:        &now,
+	}
+	m.ingressesByID[id] = i
+	m.ingressesByNatKey[key] = id
+	return i, nil
+}
+
+func (m *memStore) GetIngress(_ context.Context, id uuid.UUID) (Ingress, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	i, ok := m.ingressesByID[id]
+	if !ok {
+		return Ingress{}, ErrNotFound
+	}
+	return i, nil
+}
+
+func (m *memStore) ListIngresses(_ context.Context, namespaceID *uuid.UUID, limit int, _ string) ([]Ingress, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 50
+	}
+	out := make([]Ingress, 0, len(m.ingressesByID))
+	for _, i := range m.ingressesByID {
+		if namespaceID != nil && i.NamespaceId != *namespaceID {
+			continue
+		}
+		out = append(out, i)
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, "", nil
+}
+
+func (m *memStore) UpdateIngress(_ context.Context, id uuid.UUID, in IngressUpdate) (Ingress, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	i, ok := m.ingressesByID[id]
+	if !ok {
+		return Ingress{}, ErrNotFound
+	}
+	if in.IngressClassName != nil {
+		i.IngressClassName = in.IngressClassName
+	}
+	if in.Rules != nil {
+		i.Rules = in.Rules
+	}
+	if in.Tls != nil {
+		i.Tls = in.Tls
+	}
+	if in.Labels != nil {
+		i.Labels = in.Labels
+	}
+	now := time.Now().UTC()
+	i.UpdatedAt = &now
+	m.ingressesByID[id] = i
+	return i, nil
+}
+
+func (m *memStore) DeleteIngress(_ context.Context, id uuid.UUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	i, ok := m.ingressesByID[id]
+	if !ok {
+		return ErrNotFound
+	}
+	delete(m.ingressesByID, id)
+	delete(m.ingressesByNatKey, ingressNatKey(i.NamespaceId, i.Name))
+	return nil
+}
+
+func (m *memStore) UpsertIngress(_ context.Context, in IngressCreate) (Ingress, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.nsByID[in.NamespaceId]; !ok {
+		return Ingress{}, ErrNotFound
+	}
+	key := ingressNatKey(in.NamespaceId, in.Name)
+	now := time.Now().UTC().Add(time.Duration(m.createdN) * time.Nanosecond)
+	m.createdN++
+	if existingID, exists := m.ingressesByNatKey[key]; exists {
+		i := m.ingressesByID[existingID]
+		i.IngressClassName = in.IngressClassName
+		i.Rules = in.Rules
+		i.Tls = in.Tls
+		i.Labels = in.Labels
+		i.UpdatedAt = &now
+		m.ingressesByID[existingID] = i
+		return i, nil
+	}
+	id := uuid.New()
+	i := Ingress{
+		Id:               &id,
+		NamespaceId:      in.NamespaceId,
+		Name:             in.Name,
+		IngressClassName: in.IngressClassName,
+		Rules:            in.Rules,
+		Tls:              in.Tls,
+		Labels:           in.Labels,
+		CreatedAt:        &now,
+		UpdatedAt:        &now,
+	}
+	m.ingressesByID[id] = i
+	m.ingressesByNatKey[key] = id
+	return i, nil
+}
+
+func (m *memStore) DeleteIngressesNotIn(_ context.Context, namespaceID uuid.UUID, keepNames []string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	keep := make(map[string]struct{}, len(keepNames))
+	for _, n := range keepNames {
+		keep[n] = struct{}{}
+	}
+	var deleted int64
+	for id, i := range m.ingressesByID {
+		if i.NamespaceId != namespaceID {
+			continue
+		}
+		if _, ok := keep[i.Name]; ok {
+			continue
+		}
+		delete(m.ingressesByID, id)
+		delete(m.ingressesByNatKey, ingressNatKey(i.NamespaceId, i.Name))
 		deleted++
 	}
 	return deleted, nil
@@ -1517,6 +1678,78 @@ func TestWorkloadCRUD(t *testing.T) {
 	}
 
 	// Delete original deployment.
+	del := do(h, http.MethodDelete, url, "")
+	if del.Code != http.StatusNoContent {
+		t.Errorf("delete: %d", del.Code)
+	}
+	del2 := do(h, http.MethodDelete, url, "")
+	if del2.Code != http.StatusNotFound {
+		t.Errorf("second delete: %d", del2.Code)
+	}
+}
+
+func TestIngressCRUD(t *testing.T) {
+	t.Parallel()
+	store := newMemStore()
+	h := newTestHandler(t, store)
+
+	clusterResp := do(h, http.MethodPost, "/v1/clusters", `{"name":"prod-ing"}`)
+	var cluster Cluster
+	_ = json.Unmarshal(clusterResp.Body.Bytes(), &cluster)
+
+	nsResp := do(h, http.MethodPost, "/v1/namespaces", fmt.Sprintf(`{"cluster_id":%q,"name":"apps"}`, cluster.Id.String()))
+	var ns Namespace
+	_ = json.Unmarshal(nsResp.Body.Bytes(), &ns)
+	nsIDStr := ns.Id.String()
+
+	createBody := fmt.Sprintf(`{"namespace_id":%q,"name":"web","ingress_class_name":"nginx"}`, nsIDStr)
+	create := do(h, http.MethodPost, "/v1/ingresses", createBody)
+	if create.Code != http.StatusCreated {
+		t.Fatalf("create: %d %q", create.Code, create.Body.String())
+	}
+	var ing Ingress
+	_ = json.Unmarshal(create.Body.Bytes(), &ing)
+	if ing.Id == nil {
+		t.Fatal("ingress id nil")
+	}
+	if ing.Layer == nil || *ing.Layer != LayerIngress {
+		t.Errorf("layer=%v, want %q", ing.Layer, LayerIngress)
+	}
+	if ing.IngressClassName == nil || *ing.IngressClassName != "nginx" {
+		t.Errorf("ingress_class_name=%v", ing.IngressClassName)
+	}
+
+	dup := do(h, http.MethodPost, "/v1/ingresses", createBody)
+	if dup.Code != http.StatusConflict {
+		t.Errorf("duplicate: %d", dup.Code)
+	}
+
+	missing := do(h, http.MethodPost, "/v1/ingresses", fmt.Sprintf(`{"namespace_id":%q,"name":"x"}`, uuid.New().String()))
+	if missing.Code != http.StatusNotFound {
+		t.Errorf("unknown namespace: %d", missing.Code)
+	}
+
+	url := "/v1/ingresses/" + ing.Id.String()
+	patch := do(h, http.MethodPatch, url, `{"ingress_class_name":"traefik"}`)
+	if patch.Code != http.StatusOK {
+		t.Fatalf("patch: %d %q", patch.Code, patch.Body.String())
+	}
+	var patched Ingress
+	_ = json.Unmarshal(patch.Body.Bytes(), &patched)
+	if patched.IngressClassName == nil || *patched.IngressClassName != "traefik" {
+		t.Errorf("class after patch=%v", patched.IngressClassName)
+	}
+
+	filtered := do(h, http.MethodGet, "/v1/ingresses?namespace_id="+nsIDStr, "")
+	if filtered.Code != http.StatusOK {
+		t.Fatalf("filtered list: %d", filtered.Code)
+	}
+	var page IngressList
+	_ = json.Unmarshal(filtered.Body.Bytes(), &page)
+	if len(page.Items) != 1 {
+		t.Errorf("filtered list len=%d, want 1", len(page.Items))
+	}
+
 	del := do(h, http.MethodDelete, url, "")
 	if del.Code != http.StatusNoContent {
 		t.Errorf("delete: %d", del.Code)

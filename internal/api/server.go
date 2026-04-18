@@ -592,6 +592,96 @@ func (s *Server) DeleteService(w http.ResponseWriter, r *http.Request, id Servic
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ListIngresses returns a paged list of ingresses, optionally filtered by namespace_id.
+func (s *Server) ListIngresses(w http.ResponseWriter, r *http.Request, params ListIngressesParams) {
+	limit := 0
+	if params.Limit != nil {
+		limit = *params.Limit
+	}
+	cursor := ""
+	if params.Cursor != nil {
+		cursor = *params.Cursor
+	}
+
+	items, next, err := s.store.ListIngresses(r.Context(), params.NamespaceId, limit, cursor)
+	if err != nil {
+		s.writeStoreError(w, "listIngresses", err)
+		return
+	}
+
+	for i := range items {
+		items[i] = withIngressLayer(items[i])
+	}
+	resp := IngressList{Items: items}
+	if next != "" {
+		resp.NextCursor = &next
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// CreateIngress registers a new ingress under a namespace.
+func (s *Server) CreateIngress(w http.ResponseWriter, r *http.Request) {
+	var body IngressCreate
+	if err := decodeJSONBody(r, &body); err != nil {
+		writeProblem(w, http.StatusBadRequest, "Invalid request body", err.Error())
+		return
+	}
+	if body.Name == "" {
+		writeProblem(w, http.StatusBadRequest, "Missing field", "field 'name' is required")
+		return
+	}
+	if body.NamespaceId == (uuid.UUID{}) {
+		writeProblem(w, http.StatusBadRequest, "Missing field", "field 'namespace_id' is required")
+		return
+	}
+
+	ing, err := s.store.CreateIngress(r.Context(), body)
+	if err != nil {
+		s.writeStoreError(w, "createIngress", err)
+		return
+	}
+	ing = withIngressLayer(ing)
+
+	if ing.Id != nil {
+		w.Header().Set("Location", "/v1/ingresses/"+ing.Id.String())
+	}
+	writeJSON(w, http.StatusCreated, ing)
+}
+
+// GetIngress fetches an ingress by id.
+func (s *Server) GetIngress(w http.ResponseWriter, r *http.Request, id IngressId) {
+	ing, err := s.store.GetIngress(r.Context(), id)
+	if err != nil {
+		s.writeStoreError(w, "getIngress", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, withIngressLayer(ing))
+}
+
+// UpdateIngress applies merge-patch updates.
+func (s *Server) UpdateIngress(w http.ResponseWriter, r *http.Request, id IngressId) {
+	var body IngressUpdate
+	if err := decodeJSONBody(r, &body); err != nil {
+		writeProblem(w, http.StatusBadRequest, "Invalid request body", err.Error())
+		return
+	}
+	ing, err := s.store.UpdateIngress(r.Context(), id, body)
+	if err != nil {
+		s.writeStoreError(w, "updateIngress", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, withIngressLayer(ing))
+}
+
+// DeleteIngress removes an ingress.
+func (s *Server) DeleteIngress(w http.ResponseWriter, r *http.Request, id IngressId) {
+	if err := s.store.DeleteIngress(r.Context(), id); err != nil {
+		s.writeStoreError(w, "deleteIngress", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func isValidServiceType(t ServiceType) bool {
 	switch t {
 	case ClusterIP, NodePort, LoadBalancer, ExternalName:

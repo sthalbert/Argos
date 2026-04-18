@@ -1585,6 +1585,323 @@ func marshalPorts(ports *[]map[string]interface{}) ([]byte, error) {
 	return b, nil
 }
 
+// CreateIngress inserts a new ingress.
+func (p *PG) CreateIngress(ctx context.Context, in api.IngressCreate) (api.Ingress, error) {
+	id := uuid.New()
+	now := time.Now().UTC()
+
+	labelsJSON, err := marshalLabels(in.Labels)
+	if err != nil {
+		return api.Ingress{}, err
+	}
+	rulesJSON, err := marshalPorts(in.Rules)
+	if err != nil {
+		return api.Ingress{}, err
+	}
+	tlsJSON, err := marshalPorts(in.Tls)
+	if err != nil {
+		return api.Ingress{}, err
+	}
+
+	const q = `
+		INSERT INTO ingresses (
+			id, namespace_id, name, ingress_class_name,
+			rules, tls, labels, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+	`
+	_, err = p.pool.Exec(ctx, q,
+		id, in.NamespaceId, in.Name, in.IngressClassName,
+		rulesJSON, tlsJSON, labelsJSON, now,
+	)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			switch pgErr.Code {
+			case "23505":
+				return api.Ingress{}, fmt.Errorf("ingress %q in namespace %s already exists: %w", in.Name, in.NamespaceId, api.ErrConflict)
+			case "23503":
+				return api.Ingress{}, fmt.Errorf("namespace %s does not exist: %w", in.NamespaceId, api.ErrNotFound)
+			}
+		}
+		return api.Ingress{}, fmt.Errorf("insert ingress: %w", err)
+	}
+
+	return api.Ingress{
+		Id:               &id,
+		NamespaceId:      in.NamespaceId,
+		Name:             in.Name,
+		IngressClassName: in.IngressClassName,
+		Rules:            in.Rules,
+		Tls:              in.Tls,
+		Labels:           in.Labels,
+		CreatedAt:        &now,
+		UpdatedAt:        &now,
+	}, nil
+}
+
+// GetIngress fetches an ingress by id.
+func (p *PG) GetIngress(ctx context.Context, id uuid.UUID) (api.Ingress, error) {
+	const q = `
+		SELECT id, namespace_id, name, ingress_class_name,
+		       rules, tls, labels, created_at, updated_at
+		FROM ingresses
+		WHERE id = $1
+	`
+	row := p.pool.QueryRow(ctx, q, id)
+	ing, err := scanIngress(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return api.Ingress{}, api.ErrNotFound
+		}
+		return api.Ingress{}, fmt.Errorf("select ingress: %w", err)
+	}
+	return ing, nil
+}
+
+// ListIngresses returns up to limit ingresses, optionally filtered by namespace.
+func (p *PG) ListIngresses(ctx context.Context, namespaceID *uuid.UUID, limit int, cursor string) ([]api.Ingress, string, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	sb := strings.Builder{}
+	sb.WriteString(`SELECT id, namespace_id, name, ingress_class_name,
+	                       rules, tls, labels, created_at, updated_at
+	                FROM ingresses`)
+	args := make([]any, 0, 4)
+	conds := make([]string, 0, 2)
+
+	if namespaceID != nil {
+		args = append(args, *namespaceID)
+		conds = append(conds, fmt.Sprintf("namespace_id = $%d", len(args)))
+	}
+	if cursor != "" {
+		ts, cid, err := decodeCursor(cursor)
+		if err != nil {
+			return nil, "", err
+		}
+		args = append(args, ts)
+		tsIdx := len(args)
+		args = append(args, cid)
+		idIdx := len(args)
+		conds = append(conds, fmt.Sprintf("(created_at, id) < ($%d, $%d)", tsIdx, idIdx))
+	}
+	if len(conds) > 0 {
+		sb.WriteString(" WHERE ")
+		sb.WriteString(strings.Join(conds, " AND "))
+	}
+	args = append(args, limit+1)
+	fmt.Fprintf(&sb, " ORDER BY created_at DESC, id DESC LIMIT $%d", len(args))
+
+	rows, err := p.pool.Query(ctx, sb.String(), args...)
+	if err != nil {
+		return nil, "", fmt.Errorf("query ingresses: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]api.Ingress, 0, limit)
+	for rows.Next() {
+		ing, err := scanIngress(rows)
+		if err != nil {
+			return nil, "", fmt.Errorf("scan ingress: %w", err)
+		}
+		items = append(items, ing)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", fmt.Errorf("iterate ingresses: %w", err)
+	}
+
+	var next string
+	if len(items) > limit {
+		last := items[limit-1]
+		if last.CreatedAt != nil && last.Id != nil {
+			next = encodeCursor(*last.CreatedAt, *last.Id)
+		}
+		items = items[:limit]
+	}
+	return items, next, nil
+}
+
+// UpdateIngress applies merge-patch semantics on mutable fields.
+func (p *PG) UpdateIngress(ctx context.Context, id uuid.UUID, in api.IngressUpdate) (api.Ingress, error) {
+	sets := make([]string, 0, 4)
+	args := make([]any, 0, 6)
+	idx := 1
+	appendSet := func(column string, value any) {
+		sets = append(sets, fmt.Sprintf("%s=$%d", column, idx))
+		args = append(args, value)
+		idx++
+	}
+
+	if in.IngressClassName != nil {
+		appendSet("ingress_class_name", *in.IngressClassName)
+	}
+	if in.Rules != nil {
+		b, err := marshalPorts(in.Rules)
+		if err != nil {
+			return api.Ingress{}, err
+		}
+		appendSet("rules", b)
+	}
+	if in.Tls != nil {
+		b, err := marshalPorts(in.Tls)
+		if err != nil {
+			return api.Ingress{}, err
+		}
+		appendSet("tls", b)
+	}
+	if in.Labels != nil {
+		b, err := marshalLabels(in.Labels)
+		if err != nil {
+			return api.Ingress{}, err
+		}
+		appendSet("labels", b)
+	}
+	appendSet("updated_at", time.Now().UTC())
+	args = append(args, id)
+
+	q := fmt.Sprintf("UPDATE ingresses SET %s WHERE id=$%d", strings.Join(sets, ", "), idx)
+	tag, err := p.pool.Exec(ctx, q, args...)
+	if err != nil {
+		return api.Ingress{}, fmt.Errorf("update ingress: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return api.Ingress{}, api.ErrNotFound
+	}
+	return p.GetIngress(ctx, id)
+}
+
+// DeleteIngress removes an ingress by id.
+func (p *PG) DeleteIngress(ctx context.Context, id uuid.UUID) error {
+	tag, err := p.pool.Exec(ctx, "DELETE FROM ingresses WHERE id=$1", id)
+	if err != nil {
+		return fmt.Errorf("delete ingress: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return api.ErrNotFound
+	}
+	return nil
+}
+
+// UpsertIngress inserts-or-updates an ingress keyed by (namespace_id, name).
+func (p *PG) UpsertIngress(ctx context.Context, in api.IngressCreate) (api.Ingress, error) {
+	id := uuid.New()
+	now := time.Now().UTC()
+
+	labelsJSON, err := marshalLabels(in.Labels)
+	if err != nil {
+		return api.Ingress{}, err
+	}
+	rulesJSON, err := marshalPorts(in.Rules)
+	if err != nil {
+		return api.Ingress{}, err
+	}
+	tlsJSON, err := marshalPorts(in.Tls)
+	if err != nil {
+		return api.Ingress{}, err
+	}
+
+	const q = `
+		INSERT INTO ingresses (
+			id, namespace_id, name, ingress_class_name,
+			rules, tls, labels, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+		ON CONFLICT (namespace_id, name) DO UPDATE SET
+			ingress_class_name = EXCLUDED.ingress_class_name,
+			rules              = EXCLUDED.rules,
+			tls                = EXCLUDED.tls,
+			labels             = EXCLUDED.labels,
+			updated_at         = EXCLUDED.updated_at
+		RETURNING id, namespace_id, name, ingress_class_name,
+		          rules, tls, labels, created_at, updated_at
+	`
+	row := p.pool.QueryRow(ctx, q,
+		id, in.NamespaceId, in.Name, in.IngressClassName,
+		rulesJSON, tlsJSON, labelsJSON, now,
+	)
+	ing, err := scanIngress(row)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			return api.Ingress{}, fmt.Errorf("namespace %s does not exist: %w", in.NamespaceId, api.ErrNotFound)
+		}
+		return api.Ingress{}, fmt.Errorf("upsert ingress: %w", err)
+	}
+	return ing, nil
+}
+
+// DeleteIngressesNotIn mirrors DeleteServicesNotIn.
+func (p *PG) DeleteIngressesNotIn(ctx context.Context, namespaceID uuid.UUID, keepNames []string) (int64, error) {
+	tag, err := p.pool.Exec(ctx,
+		`DELETE FROM ingresses
+		 WHERE namespace_id = $1
+		   AND name <> ALL(COALESCE($2::text[], ARRAY[]::text[]))`,
+		namespaceID, keepNames,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("delete ingresses not in: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+func scanIngress(row pgx.Row) (api.Ingress, error) {
+	var (
+		i                api.Ingress
+		id               uuid.UUID
+		namespaceID      uuid.UUID
+		createdAt        time.Time
+		updatedAt        time.Time
+		ingressClassName sql.NullString
+		rulesJSON        []byte
+		tlsJSON          []byte
+		labelsJSON       []byte
+	)
+	if err := row.Scan(
+		&id, &namespaceID, &i.Name,
+		&ingressClassName,
+		&rulesJSON, &tlsJSON, &labelsJSON,
+		&createdAt, &updatedAt,
+	); err != nil {
+		return api.Ingress{}, err
+	}
+	i.Id = &id
+	i.NamespaceId = namespaceID
+	i.CreatedAt = &createdAt
+	i.UpdatedAt = &updatedAt
+	i.IngressClassName = nullableString(ingressClassName)
+	if len(rulesJSON) > 0 {
+		var rules []map[string]interface{}
+		if err := json.Unmarshal(rulesJSON, &rules); err != nil {
+			return api.Ingress{}, fmt.Errorf("unmarshal ingress rules: %w", err)
+		}
+		if len(rules) > 0 {
+			i.Rules = &rules
+		}
+	}
+	if len(tlsJSON) > 0 {
+		var tls []map[string]interface{}
+		if err := json.Unmarshal(tlsJSON, &tls); err != nil {
+			return api.Ingress{}, fmt.Errorf("unmarshal ingress tls: %w", err)
+		}
+		if len(tls) > 0 {
+			i.Tls = &tls
+		}
+	}
+	if len(labelsJSON) > 0 {
+		var labels map[string]string
+		if err := json.Unmarshal(labelsJSON, &labels); err != nil {
+			return api.Ingress{}, fmt.Errorf("unmarshal ingress labels: %w", err)
+		}
+		if len(labels) > 0 {
+			i.Labels = &labels
+		}
+	}
+	return i, nil
+}
+
 func scanService(row pgx.Row) (api.Service, error) {
 	var (
 		s            api.Service

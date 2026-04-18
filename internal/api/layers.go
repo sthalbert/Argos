@@ -13,6 +13,7 @@ const (
 	LayerPod       = Applicative
 	LayerWorkload  = Applicative
 	LayerService   = Applicative
+	LayerIngress   = Applicative
 )
 
 func withClusterLayer(c Cluster) Cluster {
@@ -49,4 +50,10 @@ func withServiceLayer(s Service) Service {
 	l := LayerService
 	s.Layer = &l
 	return s
+}
+
+func withIngressLayer(i Ingress) Ingress {
+	l := LayerIngress
+	i.Layer = &l
+	return i
 }
