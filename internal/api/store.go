@@ -37,4 +37,23 @@ type Store interface {
 
 	// DeleteCluster removes a cluster by id. Returns ErrNotFound if absent.
 	DeleteCluster(ctx context.Context, id uuid.UUID) error
+
+	// CreateNode inserts a new node. Returns ErrNotFound when the parent
+	// cluster does not exist; ErrConflict when (cluster_id, name) already
+	// has a node.
+	CreateNode(ctx context.Context, in NodeCreate) (Node, error)
+
+	// GetNode fetches a node by id. Returns ErrNotFound if absent.
+	GetNode(ctx context.Context, id uuid.UUID) (Node, error)
+
+	// ListNodes returns up to limit nodes after the given opaque cursor. When
+	// clusterID is non-nil, results are filtered to that cluster.
+	ListNodes(ctx context.Context, clusterID *uuid.UUID, limit int, cursor string) (items []Node, nextCursor string, err error)
+
+	// UpdateNode applies the merge-patch fields set in in. Returns
+	// ErrNotFound if the node does not exist.
+	UpdateNode(ctx context.Context, id uuid.UUID, in NodeUpdate) (Node, error)
+
+	// DeleteNode removes a node by id. Returns ErrNotFound if absent.
+	DeleteNode(ctx context.Context, id uuid.UUID) error
 }

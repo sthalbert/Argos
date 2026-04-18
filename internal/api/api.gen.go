@@ -141,6 +141,85 @@ type Health struct {
 // HealthStatus defines model for Health.Status.
 type HealthStatus string
 
+// Node defines model for Node.
+type Node struct {
+	// Architecture CPU architecture. Open-ended; common values: amd64, arm64, ppc64le, s390x.
+	Architecture *string            `json:"architecture,omitempty"`
+	ClusterId    openapi_types.UUID `json:"cluster_id"`
+	CreatedAt    *time.Time         `json:"created_at,omitempty"`
+
+	// DisplayName Human-friendly label, free-form.
+	DisplayName *string             `json:"display_name,omitempty"`
+	Id          *openapi_types.UUID `json:"id,omitempty"`
+
+	// KubeletVersion Kubelet git version as reported by Kubernetes (e.g. "v1.29.5").
+	KubeletVersion *string `json:"kubelet_version,omitempty"`
+
+	// Labels Arbitrary user-supplied string key/value labels.
+	Labels *map[string]string `json:"labels,omitempty"`
+	Name   string             `json:"name"`
+
+	// OsImage Node OS image string (e.g. "Ubuntu 22.04.3 LTS").
+	OsImage   *string    `json:"os_image,omitempty"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+}
+
+// NodeCreate defines model for NodeCreate.
+type NodeCreate struct {
+	// Architecture CPU architecture. Open-ended; common values: amd64, arm64, ppc64le, s390x.
+	Architecture *string `json:"architecture,omitempty"`
+
+	// ClusterId Parent cluster id. Immutable after creation; the cluster must
+	// already exist or the create returns 404.
+	ClusterId openapi_types.UUID `json:"cluster_id"`
+
+	// DisplayName Human-friendly label, free-form.
+	DisplayName *string `json:"display_name,omitempty"`
+
+	// KubeletVersion Kubelet git version as reported by Kubernetes (e.g. "v1.29.5").
+	KubeletVersion *string `json:"kubelet_version,omitempty"`
+
+	// Labels Arbitrary user-supplied string key/value labels.
+	Labels *map[string]string `json:"labels,omitempty"`
+
+	// Name Kubernetes node name (DNS-subdomain style). Unique per cluster.
+	// Immutable after creation.
+	Name string `json:"name"`
+
+	// OsImage Node OS image string (e.g. "Ubuntu 22.04.3 LTS").
+	OsImage *string `json:"os_image,omitempty"`
+}
+
+// NodeList Paged list of nodes.
+type NodeList struct {
+	Items []Node `json:"items"`
+
+	// NextCursor Opaque cursor to pass as `?cursor=` to fetch the next page.
+	// Absent or null when no more pages remain.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
+
+// NodeMutable Fields on a Node that clients may set and later update.
+type NodeMutable struct {
+	// Architecture CPU architecture. Open-ended; common values: amd64, arm64, ppc64le, s390x.
+	Architecture *string `json:"architecture,omitempty"`
+
+	// DisplayName Human-friendly label, free-form.
+	DisplayName *string `json:"display_name,omitempty"`
+
+	// KubeletVersion Kubelet git version as reported by Kubernetes (e.g. "v1.29.5").
+	KubeletVersion *string `json:"kubelet_version,omitempty"`
+
+	// Labels Arbitrary user-supplied string key/value labels.
+	Labels *map[string]string `json:"labels,omitempty"`
+
+	// OsImage Node OS image string (e.g. "Ubuntu 22.04.3 LTS").
+	OsImage *string `json:"os_image,omitempty"`
+}
+
+// NodeUpdate Fields on a Node that clients may set and later update.
+type NodeUpdate = NodeMutable
+
 // Problem RFC 7807 problem details.
 type Problem struct {
 	Detail *string `json:"detail,omitempty"`
@@ -164,6 +243,12 @@ type Cursor = string
 
 // Limit defines model for Limit.
 type Limit = int
+
+// NodeClusterIdFilter defines model for NodeClusterIdFilter.
+type NodeClusterIdFilter = openapi_types.UUID
+
+// NodeId defines model for NodeId.
+type NodeId = openapi_types.UUID
 
 // BadRequest RFC 7807 problem details.
 type BadRequest = Problem
@@ -189,11 +274,29 @@ type ListClustersParams struct {
 	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
+// ListNodesParams defines parameters for ListNodes.
+type ListNodesParams struct {
+	// Limit Maximum number of items to return. Server clamps to [1, 200].
+	Limit *Limit `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque cursor returned from a previous list response.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// ClusterId Return only nodes belonging to this cluster.
+	ClusterId *NodeClusterIdFilter `form:"cluster_id,omitempty" json:"cluster_id,omitempty"`
+}
+
 // CreateClusterJSONRequestBody defines body for CreateCluster for application/json ContentType.
 type CreateClusterJSONRequestBody = ClusterCreate
 
 // UpdateClusterApplicationMergePatchPlusJSONRequestBody defines body for UpdateCluster for application/merge-patch+json ContentType.
 type UpdateClusterApplicationMergePatchPlusJSONRequestBody = ClusterUpdate
+
+// CreateNodeJSONRequestBody defines body for CreateNode for application/json ContentType.
+type CreateNodeJSONRequestBody = NodeCreate
+
+// UpdateNodeApplicationMergePatchPlusJSONRequestBody defines body for UpdateNode for application/merge-patch+json ContentType.
+type UpdateNodeApplicationMergePatchPlusJSONRequestBody = NodeUpdate
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -218,6 +321,21 @@ type ServerInterface interface {
 	// Update mutable fields of a cluster
 	// (PATCH /v1/clusters/{id})
 	UpdateCluster(w http.ResponseWriter, r *http.Request, id ClusterId)
+	// List nodes
+	// (GET /v1/nodes)
+	ListNodes(w http.ResponseWriter, r *http.Request, params ListNodesParams)
+	// Register a node
+	// (POST /v1/nodes)
+	CreateNode(w http.ResponseWriter, r *http.Request)
+	// Delete a node
+	// (DELETE /v1/nodes/{id})
+	DeleteNode(w http.ResponseWriter, r *http.Request, id NodeId)
+	// Get a node
+	// (GET /v1/nodes/{id})
+	GetNode(w http.ResponseWriter, r *http.Request, id NodeId)
+	// Update mutable fields of a node
+	// (PATCH /v1/nodes/{id})
+	UpdateNode(w http.ResponseWriter, r *http.Request, id NodeId)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -411,6 +529,168 @@ func (siw *ServerInterfaceWrapper) UpdateCluster(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// ListNodes operation middleware
+func (siw *ServerInterfaceWrapper) ListNodes(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{"read"})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListNodesParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "cluster_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cluster_id", r.URL.Query(), &params.ClusterId, runtime.BindQueryParameterOptions{Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cluster_id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListNodes(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateNode operation middleware
+func (siw *ServerInterfaceWrapper) CreateNode(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{"write"})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateNode(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteNode operation middleware
+func (siw *ServerInterfaceWrapper) DeleteNode(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id NodeId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{"delete"})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteNode(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetNode operation middleware
+func (siw *ServerInterfaceWrapper) GetNode(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id NodeId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{"read"})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetNode(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateNode operation middleware
+func (siw *ServerInterfaceWrapper) UpdateNode(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id NodeId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{"write"})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateNode(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -538,6 +818,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc("DELETE "+options.BaseURL+"/v1/clusters/{id}", wrapper.DeleteCluster)
 	m.HandleFunc("GET "+options.BaseURL+"/v1/clusters/{id}", wrapper.GetCluster)
 	m.HandleFunc("PATCH "+options.BaseURL+"/v1/clusters/{id}", wrapper.UpdateCluster)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/nodes", wrapper.ListNodes)
+	m.HandleFunc("POST "+options.BaseURL+"/v1/nodes", wrapper.CreateNode)
+	m.HandleFunc("DELETE "+options.BaseURL+"/v1/nodes/{id}", wrapper.DeleteNode)
+	m.HandleFunc("GET "+options.BaseURL+"/v1/nodes/{id}", wrapper.GetNode)
+	m.HandleFunc("PATCH "+options.BaseURL+"/v1/nodes/{id}", wrapper.UpdateNode)
 
 	return m
 }
@@ -545,51 +830,61 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"H4sIAAAAAAAC/9RabXPbxvH/Kjv4Z+YvOeCDZDuJmel0ZDlONJVtjRS3L0TVOuIW5IWHO/geqDAezvRD",
-	"9BP2k3T2DiBBEhSV1FHTNzYI7N3u7cNvH06fkkwXpVaonE0Gn5KSGVagQxN+nUpvHZozTj842syI0gmt",
-	"kkFyhWaGpsOsFWOFHLJICoKjciIXaLpJmggiLZmbJGmiWIHJIBE8SRODH70wyJOBMx7TxGYTLBhxybUp",
-	"mEsGifeB0s1LWmWdEWqcLBZpcuqN1WZboncl++gRsvAZDDpvSLDc6AIYlAZnQnsLUlgHBm2plcWljB89",
-	"mvlKyLhJ0hSsYD+foxq7STJ4fnTcJti5KITblusN+1kUvgDlixEa0DkIh4UFpyshuxCVCZlkRRk+XB+l",
-	"cNzv3+ySTwZWTfE45sxLlwye91OSlVgmg+M+/RIq/jpaSi2UwzGaZEFy18oIJn/J+CV+9GjDSTKtHKrw",
-	"yMpSiozRoXql0SOJxZc/WTrhp4YYXxjMk0Hyf72VW/XiV9u7iKsi000dSTI8cjCReTchS2uVS5E9qiQ1",
-	"T7gTbkLOZFA5sI45hAPsjrspcB/5I5A1DoOor7UZCc5RPaasP+opKhAWZkwKDiPvQLJsasFNEGymS4Q6",
-	"0GA0D291iSZIE6R+q91r7RV/TKEv0WpvMgSlHeTEPYjyXjHvJtqIX/BRxXkjrBVqDNqAUJUekRk04Ei7",
-	"3RDZ1T4NSAxySfkuTwbX9/OuFrzxjo0kJov0U1IaMoMTMeIyg8wh/8DcGv5x5rDjRIEBLhl/p+S8hssN",
-	"7EkJVFuwc++yiCZr2PbVswAY9c/jlODboSFd/f2adX7pd17cVP93bj7106+OF/XrL5IWHr7k/+HxFs18",
-	"cR0TSJA8bepujdPNchM9+gkzlyxuNg1/An/xIzQKHdpl9jI4FvSAHIQKAXP65tXLCEaR5DRw/Izmr22w",
-	"kV4DOVjpxx0pptjIqyl4JSjTscxoa1dSDtVZUUQ+wHI6TlAPBftQJenvaOUNC4UjPcAEF2wuNeMxE0bF",
-	"AwOFd7U9moo/F7YluV6wMfKY03VeL7OUNte1HFLu2sMDjEbcqzMwY9g8hAz+7D5kDypBnIaSWQvMwu2f",
-	"47s/3dLbHF02CXaj3aBkY+wO1cnIUqrRBpSXEu4mqEBpKLTBQGLBYMFEZUyiCR71sJgJp942yVK7tX9u",
-	"Hem1QMktaAUMKlpwE+Ygk4J0BgWbg0UHTHGQjD7HONy2ASvFB1S81EK1WLIRjScXZ2BjSfT+8hwOhIqw",
-	"IbRi8pA2XiGdEW2gw4UtJZt/aA+uH3zBVCc3AhWXc5BshDKF3CB2aOPueqwcP/+qhQOqmTBaFdh2ltf1",
-	"VtAgA8fGyxICZykVFWOhximURvPD7naEbjGdLnX0YYbGipgDNwqYykgNJVa0YLDUxsVioKHuIBMMk6Pu",
-	"8Yvu82GyKcrT4xZRgtKiWTkX0TQXa+beq8INPDYj4Qwzc/AWTcd6yvrIIdLDFOe9GZMeo7lsJWOTZUNl",
-	"K/8ujZ4Jji3B+l5xNHJOmzeUwQUxHHkiolicaOuIpN6nO1TvSlQdVBz5t5DpotAKgmR2AOMppoBTmwKj",
-	"f3SJyk5E7lIw9IXsx3iRglalQfrfTcKWD7A9IWS09/2Ui91B/j4E5m/PXVsA/gbNGDslIzgbaT7vAqVx",
-	"qJNQHrDjW7ilMLylQlXUCYrUWAhHzhipgBkEibkDr7IJU2PkpJdFmvyATNJZNxMn1eQ+PKGi7uY60dMG",
-	"xK00tzNUXnoh+TI6dB4g2XilyODMjLXl3b3JrhKjDVvrsnOL8eXrU/j6m/7XUJWzwNExIVvyVvxAT9sI",
-	"ZIw2dgdidyTOUMbGIAAnRPI05pWqpCZDUIdZ58R13sEwrawLtJaNseXbhnLiFqsFbVrazLBCWcdUhusV",
-	"bTvOr3xg2fI+f/Gi2fJSA7zZ9KaJE05i69Hii0Y/nbCR9m4wkkxN92aejeOHrzW3dLer0Ekw80a4+RXF",
-	"XtWKhz7kxEfnj13J65p96E6SLRC9OIt9CwhrPXLQ3nV03hkxxbtwhYqHauSkarWCZwwgMoKh7/efZmF5",
-	"eMTb7lAN1RU1khbGhikKV6eBRR6DoQLowC2V77cA8K9//DNWYlQKjNGtmk1bUd4Z4fA2UsbSPdDGggEO",
-	"REGQb+sdmQsBmTEp0fx/gObMIO13WO3HUSJtSPsZLPSMGt7YXtYsGS+EqlgyKesoZyM9w2+JmlIkh1wb",
-	"yL3zBiGs6GgCsrpasaSH0G1byJgxIWnQNvX2sdkO8mfCyTlY5oTN58DUfKMTH6oRvW504gH+A+aST0Q7",
-	"r1xr4lwZG1cqg1qw5LurH0OypyM8eXJCsPXkSUrl2ptXL8PbRnpr1CMWmIyzuzDqcBMcqpO3V1dncIXZ",
-	"W1+cSu05HFy9PT2Ej55JkVdNOOSGFXinzTT4x48TYZcgetDvHnX7h4T1DO6YnJKm7JTspBVkeoYUKJXn",
-	"nIsZKqQKWXEgm4vwi0Bxab8qB90uDQunl+9fBb/0I4sfPVVWFXcLd0JKYJzDW80xhbesQFuyDFP4mzZT",
-	"ajZSuNA8DRxD8h2qNe044eYwFYpTYVuWFEHK6WDrqJuMGafHhpUTKhzn1GyQMN8FdIVcS6nvYInvB7e7",
-	"hhe3h5XdfVEwM18rgDsZKmdEFi24aSXYNtLKIEu0oYJqrG3c4uTiLGnkwSQYidCOChRWimSQPA2vQh84",
-	"CejTm4S8+ws9jzEUuUuXPePJIPke3Q8VycYM8bjfv2eE8+tGN1X2b5ncXKGZiQyDq0kxw+4ajiaD65um",
-	"dpe+FryL1MTGljA6HjO5ocU9csJ588jrLP+KhlpwC1zfKesMMkrdJdWCKqP3B5w5NmIWD0M9Y5BlkzrL",
-	"bmnvMjL7bysvnJlgPUAhOMPyXGSh9X7ef/qYs7iGUEq7KNj9Vr1cB41dZp0d9erRwE53PhfWndZE6dpF",
-	"yI4yeUXSi6P/RbqXsLq8oFL6d7N6c2DSouVdI5NFmjyLUrRtvpS217ghCEuO9i9ZG+6GRU/3L1qN1Dc8",
-	"YL0yug7jw+RmsRHu1i3P1nCL5asb6g21bXGEOOGrR0CxoEPrXmo+/9wmqoaJi/W60RmPiy3/OPrczFtv",
-	"P6rhQTVXJdiaIONV3JzryK+ll748qysrhXdyXm+wGuS13/G11tCLP7An0ooX+1csb672uG4oiDd993I1",
-	"C82WXtjiwBvI1vsk+CKahqribcd+Fd43HXvNwZ7tniXFHXn3UdX8bP+K5f3VHjVXGtnQc9THPi2nO6uf",
-	"nZrsP2aoLkcH/6O2aUPv79HtN8uvy9CrP2UgVmFk1XJV35hnWSyYciKzg3pCpeuBldFFgLqR5vNQ5zVH",
-	"Vi3DrtbbmHV3iqO5X5t0ipW8X/4mx6omgg9KQI/i1VEgvnYB9EfOBZ8xEFpzQdTHxkSVUu2+3HAvr8gk",
-	"XA7E4Fk3AuV5CRxnKHUZbjjSxBtZDSMGvZ4kgom2bvBN/5t+iKhKhq2t7mvx4cAHE1DbnZHZw81D9Scu",
-	"VQFPNfXOi6L6wDvvbVd/0FOrZnGz+HcAAAD//zBlqu30JAAA",
+	"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",
+	"ggGml9N/BwAA//8pD5mRLzsAAA==",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

@@ -21,15 +21,23 @@ type memStore struct {
 	mu       sync.Mutex
 	byID     map[uuid.UUID]Cluster
 	byName   map[string]uuid.UUID
+	nodesByID     map[uuid.UUID]Node
+	nodesByNatKey map[string]uuid.UUID // "<cluster_id>/<name>" -> node id
 	pingErr  error
 	createdN int
 }
 
 func newMemStore() *memStore {
 	return &memStore{
-		byID:   make(map[uuid.UUID]Cluster),
-		byName: make(map[string]uuid.UUID),
+		byID:          make(map[uuid.UUID]Cluster),
+		byName:        make(map[string]uuid.UUID),
+		nodesByID:     make(map[uuid.UUID]Node),
+		nodesByNatKey: make(map[string]uuid.UUID),
 	}
+}
+
+func nodeNatKey(clusterID uuid.UUID, name string) string {
+	return clusterID.String() + "/" + name
 }
 
 func (m *memStore) Ping(_ context.Context) error { return m.pingErr }
@@ -130,6 +138,105 @@ func (m *memStore) DeleteCluster(_ context.Context, id uuid.UUID) error {
 	}
 	delete(m.byID, id)
 	delete(m.byName, c.Name)
+	return nil
+}
+
+func (m *memStore) CreateNode(_ context.Context, in NodeCreate) (Node, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.byID[in.ClusterId]; !ok {
+		return Node{}, ErrNotFound
+	}
+	key := nodeNatKey(in.ClusterId, in.Name)
+	if _, dup := m.nodesByNatKey[key]; dup {
+		return Node{}, fmt.Errorf("duplicate node: %w", ErrConflict)
+	}
+	id := uuid.New()
+	now := time.Now().UTC().Add(time.Duration(m.createdN) * time.Nanosecond)
+	m.createdN++
+	n := Node{
+		Id:             &id,
+		ClusterId:      in.ClusterId,
+		Name:           in.Name,
+		DisplayName:    in.DisplayName,
+		KubeletVersion: in.KubeletVersion,
+		OsImage:        in.OsImage,
+		Architecture:   in.Architecture,
+		Labels:         in.Labels,
+		CreatedAt:      &now,
+		UpdatedAt:      &now,
+	}
+	m.nodesByID[id] = n
+	m.nodesByNatKey[key] = id
+	return n, nil
+}
+
+func (m *memStore) GetNode(_ context.Context, id uuid.UUID) (Node, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.nodesByID[id]
+	if !ok {
+		return Node{}, ErrNotFound
+	}
+	return n, nil
+}
+
+func (m *memStore) ListNodes(_ context.Context, clusterID *uuid.UUID, limit int, _ string) ([]Node, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 50
+	}
+	out := make([]Node, 0, len(m.nodesByID))
+	for _, n := range m.nodesByID {
+		if clusterID != nil && n.ClusterId != *clusterID {
+			continue
+		}
+		out = append(out, n)
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, "", nil
+}
+
+func (m *memStore) UpdateNode(_ context.Context, id uuid.UUID, in NodeUpdate) (Node, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.nodesByID[id]
+	if !ok {
+		return Node{}, ErrNotFound
+	}
+	if in.DisplayName != nil {
+		n.DisplayName = in.DisplayName
+	}
+	if in.KubeletVersion != nil {
+		n.KubeletVersion = in.KubeletVersion
+	}
+	if in.OsImage != nil {
+		n.OsImage = in.OsImage
+	}
+	if in.Architecture != nil {
+		n.Architecture = in.Architecture
+	}
+	if in.Labels != nil {
+		n.Labels = in.Labels
+	}
+	now := time.Now().UTC()
+	n.UpdatedAt = &now
+	m.nodesByID[id] = n
+	return n, nil
+}
+
+func (m *memStore) DeleteNode(_ context.Context, id uuid.UUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.nodesByID[id]
+	if !ok {
+		return ErrNotFound
+	}
+	delete(m.nodesByID, id)
+	delete(m.nodesByNatKey, nodeNatKey(n.ClusterId, n.Name))
 	return nil
 }
 
@@ -254,6 +361,124 @@ func TestClusterCRUD(t *testing.T) {
 
 	// Delete again → 404
 	del2 := do(h, http.MethodDelete, getURL, "")
+	if del2.Code != http.StatusNotFound {
+		t.Errorf("second delete status=%d", del2.Code)
+	}
+}
+
+func TestNodeCRUD(t *testing.T) {
+	t.Parallel()
+	store := newMemStore()
+	h := newTestHandler(t, store)
+
+	// Seed a cluster so node creates have a valid FK.
+	clusterResp := do(h, http.MethodPost, "/v1/clusters", `{"name":"prod-eu-west-1"}`)
+	if clusterResp.Code != http.StatusCreated {
+		t.Fatalf("seed cluster: status=%d body=%q", clusterResp.Code, clusterResp.Body.String())
+	}
+	var cluster Cluster
+	if err := json.Unmarshal(clusterResp.Body.Bytes(), &cluster); err != nil {
+		t.Fatalf("decode cluster: %v", err)
+	}
+	clusterIDStr := cluster.Id.String()
+
+	// Create node
+	createBody := fmt.Sprintf(`{"cluster_id":%q,"name":"node-1","kubelet_version":"v1.29.5"}`, clusterIDStr)
+	create := do(h, http.MethodPost, "/v1/nodes", createBody)
+	if create.Code != http.StatusCreated {
+		t.Fatalf("create node: status=%d body=%q", create.Code, create.Body.String())
+	}
+	if loc := create.Header().Get("Location"); !strings.HasPrefix(loc, "/v1/nodes/") {
+		t.Errorf("Location=%q", loc)
+	}
+	var node Node
+	if err := json.Unmarshal(create.Body.Bytes(), &node); err != nil {
+		t.Fatalf("decode node: %v", err)
+	}
+	if node.Id == nil {
+		t.Fatal("node.Id is nil")
+	}
+	if node.ClusterId != *cluster.Id {
+		t.Errorf("node.ClusterId=%v, want %v", node.ClusterId, *cluster.Id)
+	}
+
+	// Duplicate (cluster_id, name) → 409
+	dup := do(h, http.MethodPost, "/v1/nodes", createBody)
+	if dup.Code != http.StatusConflict {
+		t.Errorf("duplicate node status=%d", dup.Code)
+	}
+
+	// Create with unknown cluster_id → 404
+	missing := do(h, http.MethodPost, "/v1/nodes", fmt.Sprintf(`{"cluster_id":%q,"name":"x"}`, uuid.New().String()))
+	if missing.Code != http.StatusNotFound {
+		t.Errorf("missing cluster create status=%d", missing.Code)
+	}
+
+	// Get
+	nodeURL := "/v1/nodes/" + node.Id.String()
+	get := do(h, http.MethodGet, nodeURL, "")
+	if get.Code != http.StatusOK {
+		t.Fatalf("get node status=%d body=%q", get.Code, get.Body.String())
+	}
+
+	// Patch
+	patch := do(h, http.MethodPatch, nodeURL, `{"architecture":"arm64"}`)
+	if patch.Code != http.StatusOK {
+		t.Fatalf("patch status=%d body=%q", patch.Code, patch.Body.String())
+	}
+	var patched Node
+	if err := json.Unmarshal(patch.Body.Bytes(), &patched); err != nil {
+		t.Fatalf("decode patch: %v", err)
+	}
+	if patched.Architecture == nil || *patched.Architecture != "arm64" {
+		t.Errorf("architecture=%v", patched.Architecture)
+	}
+
+	// List all
+	list := do(h, http.MethodGet, "/v1/nodes", "")
+	if list.Code != http.StatusOK {
+		t.Fatalf("list status=%d", list.Code)
+	}
+	var page NodeList
+	if err := json.Unmarshal(list.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(page.Items) != 1 {
+		t.Errorf("list len=%d", len(page.Items))
+	}
+
+	// List filtered by cluster_id
+	filtered := do(h, http.MethodGet, "/v1/nodes?cluster_id="+clusterIDStr, "")
+	if filtered.Code != http.StatusOK {
+		t.Fatalf("filtered list status=%d", filtered.Code)
+	}
+	if err := json.Unmarshal(filtered.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode filtered list: %v", err)
+	}
+	if len(page.Items) != 1 {
+		t.Errorf("filtered list len=%d", len(page.Items))
+	}
+
+	// List filtered by a different cluster id → empty
+	empty := do(h, http.MethodGet, "/v1/nodes?cluster_id="+uuid.New().String(), "")
+	if empty.Code != http.StatusOK {
+		t.Fatalf("empty-filter list status=%d", empty.Code)
+	}
+	if err := json.Unmarshal(empty.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode empty list: %v", err)
+	}
+	if len(page.Items) != 0 {
+		t.Errorf("empty-filter list len=%d", len(page.Items))
+	}
+
+	// Delete
+	del := do(h, http.MethodDelete, nodeURL, "")
+	if del.Code != http.StatusNoContent {
+		t.Errorf("delete status=%d", del.Code)
+	}
+
+	// Delete again → 404
+	del2 := do(h, http.MethodDelete, nodeURL, "")
 	if del2.Code != http.StatusNotFound {
 		t.Errorf("second delete status=%d", del2.Code)
 	}

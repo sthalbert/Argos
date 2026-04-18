@@ -59,7 +59,7 @@ Configure tokens via either or both env vars (merged at startup):
 
 At least one token must be configured; `/healthz` and `/readyz` stay open.
 - `internal/api/` — generated server (`api.gen.go`), hand-written handlers (`server.go`), `Store` interface (`store.go`) with `ErrNotFound` / `ErrConflict` sentinels. RFC 7807 `application/problem+json` for all errors.
-- `internal/store/` — PostgreSQL implementation of `api.Store` using `pgx/v5`. Cursor-paginated list, merge-patch updates, embedded `goose` migrations.
+- `internal/store/` — PostgreSQL implementation of `api.Store` using `pgx/v5`. Cursor-paginated list, merge-patch updates, embedded `goose` migrations. Nodes are FK-linked to clusters with `ON DELETE CASCADE`.
 - `internal/collector/` — Kubernetes polling collector (v1 scope: fetches the API server version via `client-go` and refreshes the matching cluster record by name). Disabled by default; enable with `ARGOS_COLLECTOR_ENABLED=true` and `ARGOS_CLUSTER_NAME=...`.
 - `migrations/` — timestamped SQL migrations, embedded in the binary via `migrations/embed.go`.
 - `.github/workflows/ci.yml` — GitHub Actions pipeline: codegen-drift check, `go vet`, `go build`, `go test -race` against a Postgres service container (so the integration tests gated on `PGX_TEST_DATABASE` run in CI), and `golangci-lint`.
