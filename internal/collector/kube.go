@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -11,6 +12,23 @@ import (
 
 	"github.com/sthalbert/argos/internal/api"
 )
+
+// netv1Backend flattens a NetworkingV1 IngressBackend into the generic map
+// shape the CMDB persists as JSONB. Returns nil when the backend isn't a
+// Service-backed one (a resource backend, for instance).
+func netv1Backend(b *networkingv1.IngressBackend) map[string]interface{} {
+	if b == nil || b.Service == nil {
+		return nil
+	}
+	out := map[string]interface{}{"service_name": b.Service.Name}
+	if b.Service.Port.Name != "" {
+		out["service_port_name"] = b.Service.Port.Name
+	}
+	if b.Service.Port.Number != 0 {
+		out["service_port_number"] = int(b.Service.Port.Number)
+	}
+	return out
+}
 
 // KubeClient talks to a single Kubernetes cluster via client-go. It
 // satisfies KubeSource (ServerVersion + ListNodes). The target cluster is
@@ -128,6 +146,62 @@ func (k *KubeClient) ListPods(ctx context.Context) ([]PodInfo, error) {
 // ListServices returns every Service visible through the configured kubeconfig,
 // across all namespaces. Ports are serialised into generic maps so the store
 // can persist them as JSONB without coupling to client-go types.
+// ListIngresses returns every Ingress visible through the configured
+// kubeconfig. Rules and TLS entries are flattened to generic maps so the
+// store persists them as JSONB without coupling to client-go types.
+func (k *KubeClient) ListIngresses(ctx context.Context) ([]IngressInfo, error) {
+	list, err := k.clientset.NetworkingV1().Ingresses("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list ingresses: %w", err)
+	}
+	out := make([]IngressInfo, 0, len(list.Items))
+	for _, ing := range list.Items {
+		rules := make([]map[string]interface{}, 0, len(ing.Spec.Rules))
+		for _, r := range ing.Spec.Rules {
+			paths := []map[string]interface{}{}
+			if r.HTTP != nil {
+				for _, p := range r.HTTP.Paths {
+					path := map[string]interface{}{
+						"path": p.Path,
+					}
+					if p.PathType != nil {
+						path["path_type"] = string(*p.PathType)
+					}
+					if backend := netv1Backend(&p.Backend); backend != nil {
+						path["backend"] = backend
+					}
+					paths = append(paths, path)
+				}
+			}
+			entry := map[string]interface{}{"host": r.Host, "paths": paths}
+			rules = append(rules, entry)
+		}
+
+		tls := make([]map[string]interface{}, 0, len(ing.Spec.TLS))
+		for _, t := range ing.Spec.TLS {
+			tls = append(tls, map[string]interface{}{
+				"hosts":       t.Hosts,
+				"secret_name": t.SecretName,
+			})
+		}
+
+		var className string
+		if ing.Spec.IngressClassName != nil {
+			className = *ing.Spec.IngressClassName
+		}
+
+		out = append(out, IngressInfo{
+			Name:             ing.Name,
+			Namespace:        ing.Namespace,
+			IngressClassName: className,
+			Rules:            rules,
+			TLS:              tls,
+			Labels:           ing.Labels,
+		})
+	}
+	return out, nil
+}
+
 func (k *KubeClient) ListServices(ctx context.Context) ([]ServiceInfo, error) {
 	list, err := k.clientset.CoreV1().Services("").List(ctx, metav1.ListOptions{})
 	if err != nil {

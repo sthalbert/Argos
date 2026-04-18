@@ -170,4 +170,25 @@ type Store interface {
 
 	// DeleteServicesNotIn mirrors DeletePodsNotIn, scoped to a single namespace.
 	DeleteServicesNotIn(ctx context.Context, namespaceID uuid.UUID, keepNames []string) (int64, error)
+
+	// CreateIngress inserts a new ingress.
+	CreateIngress(ctx context.Context, in IngressCreate) (Ingress, error)
+
+	// GetIngress fetches an ingress by id.
+	GetIngress(ctx context.Context, id uuid.UUID) (Ingress, error)
+
+	// ListIngresses returns up to limit ingresses, optionally filtered by namespace.
+	ListIngresses(ctx context.Context, namespaceID *uuid.UUID, limit int, cursor string) (items []Ingress, nextCursor string, err error)
+
+	// UpdateIngress applies merge-patch.
+	UpdateIngress(ctx context.Context, id uuid.UUID, in IngressUpdate) (Ingress, error)
+
+	// DeleteIngress removes by id.
+	DeleteIngress(ctx context.Context, id uuid.UUID) error
+
+	// UpsertIngress mirrors UpsertService; keyed on (namespace_id, name).
+	UpsertIngress(ctx context.Context, in IngressCreate) (Ingress, error)
+
+	// DeleteIngressesNotIn mirrors DeleteServicesNotIn.
+	DeleteIngressesNotIn(ctx context.Context, namespaceID uuid.UUID, keepNames []string) (int64, error)
 }

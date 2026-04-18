@@ -38,6 +38,11 @@ tags:
       A single collection polymorphic on the `kind` discriminator; see ADR-0003.
   - name: services
     description: Kubernetes Services within a namespace.
+  - name: ingresses
+    description: |
+      Kubernetes Ingresses. Classified in the `applicative` layer per ADR-0004;
+      the "what's internet-exposed?" audit question is answered via future
+      ecosystem-layer relationships, not via layer membership.
 
 security:
   - BearerAuth: []
@@ -863,6 +868,137 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /v1/ingresses:
+    get:
+      tags: [ingresses]
+      summary: List ingresses
+      operationId: listIngresses
+      security:
+        - BearerAuth: [read]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/IngressNamespaceIdFilter'
+      responses:
+        '200':
+          description: Paged list of ingresses.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngressList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags: [ingresses]
+      summary: Register an ingress
+      operationId: createIngress
+      security:
+        - BearerAuth: [write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IngressCreate'
+      responses:
+        '201':
+          description: Ingress created.
+          headers:
+            Location:
+              description: URI of the newly created ingress.
+              schema:
+                type: string
+                format: uri
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ingress'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /v1/ingresses/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IngressId'
+    get:
+      tags: [ingresses]
+      summary: Get an ingress
+      operationId: getIngress
+      security:
+        - BearerAuth: [read]
+      responses:
+        '200':
+          description: Ingress details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ingress'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [ingresses]
+      summary: Update mutable fields of an ingress
+      description: |
+        Merge-patch semantics: fields omitted from the body are unchanged.
+        `namespace_id` and `name` are immutable after creation.
+      operationId: updateIngress
+      security:
+        - BearerAuth: [write]
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/IngressUpdate'
+      responses:
+        '200':
+          description: Updated ingress.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ingress'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [ingresses]
+      summary: Delete an ingress
+      operationId: deleteIngress
+      security:
+        - BearerAuth: [delete]
+      responses:
+        '204':
+          description: Ingress deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
 components:
 
   securitySchemes:
@@ -987,6 +1123,24 @@ components:
       in: query
       required: false
       description: Return only services belonging to this namespace.
+      schema:
+        type: string
+        format: uuid
+
+    IngressId:
+      name: id
+      in: path
+      required: true
+      description: Server-assigned ingress identifier.
+      schema:
+        type: string
+        format: uuid
+
+    IngressNamespaceIdFilter:
+      name: namespace_id
+      in: query
+      required: false
+      description: Return only ingresses belonging to this namespace.
       schema:
         type: string
         format: uuid
@@ -1765,6 +1919,117 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Service'
+        next_cursor:
+          type: string
+          nullable: true
+          description: |
+            Opaque cursor to pass as `?cursor=` to fetch the next page.
+            Absent or null when no more pages remain.
+
+    IngressMutable:
+      description: Fields on an Ingress that clients may set and later update.
+      type: object
+      properties:
+        ingress_class_name:
+          type: string
+          maxLength: 253
+          description: IngressClass name the controller binds to (e.g., "nginx", "traefik").
+        rules:
+          type: array
+          description: |
+            Ingress routing rules. Opaque in v1: each entry carries whatever the
+            collector chose to persist (host, path, path_type, backend service
+            name / port).
+          items:
+            type: object
+            additionalProperties: true
+        tls:
+          type: array
+          description: |
+            TLS configuration entries. Opaque in v1: each entry carries hosts
+            and the referenced Secret name.
+          items:
+            type: object
+            additionalProperties: true
+        labels:
+          type: object
+          description: Arbitrary user-supplied string key/value labels.
+          additionalProperties:
+            type: string
+            maxLength: 256
+          maxProperties: 64
+
+    IngressCreate:
+      description: Payload to register a new ingress under a namespace.
+      allOf:
+        - $ref: '#/components/schemas/IngressMutable'
+        - type: object
+          required: [namespace_id, name]
+          properties:
+            namespace_id:
+              type: string
+              format: uuid
+              description: |
+                Parent namespace id. Immutable after creation; the namespace
+                must already exist or the create returns 404.
+            name:
+              type: string
+              description: |
+                Kubernetes ingress name (DNS-label style). Unique per namespace.
+                Immutable after creation.
+              pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+              minLength: 1
+              maxLength: 63
+
+    IngressUpdate:
+      description: |
+        Merge-patch body. Only mutable fields; `namespace_id` and `name` are
+        immutable. Omitted fields are left unchanged.
+      allOf:
+        - $ref: '#/components/schemas/IngressMutable'
+
+    Ingress:
+      description: A Kubernetes Ingress registered in the CMDB.
+      allOf:
+        - $ref: '#/components/schemas/IngressMutable'
+        - type: object
+          required: [id, namespace_id, name, layer, created_at, updated_at]
+          properties:
+            id:
+              type: string
+              format: uuid
+              readOnly: true
+            namespace_id:
+              type: string
+              format: uuid
+            name:
+              type: string
+              pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+              minLength: 1
+              maxLength: 63
+            layer:
+              allOf:
+                - $ref: '#/components/schemas/Layer'
+              readOnly: true
+              description: Always `applicative` for Ingress. See ADR-0004.
+            created_at:
+              type: string
+              format: date-time
+              readOnly: true
+            updated_at:
+              type: string
+              format: date-time
+              readOnly: true
+
+    IngressList:
+      description: Paged list of ingresses.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Ingress'
         next_cursor:
           type: string
           nullable: true

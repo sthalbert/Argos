@@ -67,6 +67,18 @@ type ServiceInfo struct {
 	Labels    map[string]string
 }
 
+// IngressInfo is the subset of a Kubernetes Ingress the collector consumes.
+// Rules and TLS entries are flattened into generic maps so the store can
+// persist them as JSONB without coupling to client-go types.
+type IngressInfo struct {
+	Name             string
+	Namespace        string
+	IngressClassName string
+	Rules            []map[string]interface{}
+	TLS              []map[string]interface{}
+	Labels           map[string]string
+}
+
 // VersionFetcher returns the Kubernetes API server version for the cluster
 // it was configured against (typically via kubeconfig or in-cluster config).
 type VersionFetcher interface {
@@ -101,6 +113,12 @@ type ServiceLister interface {
 	ListServices(ctx context.Context) ([]ServiceInfo, error)
 }
 
+// IngressLister returns every Ingress visible to the configured kubeconfig,
+// across all namespaces.
+type IngressLister interface {
+	ListIngresses(ctx context.Context) ([]IngressInfo, error)
+}
+
 // KubeSource is the composite contract the Collector consumes.
 type KubeSource interface {
 	VersionFetcher
@@ -109,6 +127,7 @@ type KubeSource interface {
 	PodLister
 	WorkloadLister
 	ServiceLister
+	IngressLister
 }
 
 // cmdbStore is the subset of api.Store the collector consumes.
@@ -125,6 +144,8 @@ type cmdbStore interface {
 	DeleteWorkloadsNotIn(ctx context.Context, namespaceID uuid.UUID, keepKinds, keepNames []string) (int64, error)
 	UpsertService(ctx context.Context, in api.ServiceCreate) (api.Service, error)
 	DeleteServicesNotIn(ctx context.Context, namespaceID uuid.UUID, keepNames []string) (int64, error)
+	UpsertIngress(ctx context.Context, in api.IngressCreate) (api.Ingress, error)
+	DeleteIngressesNotIn(ctx context.Context, namespaceID uuid.UUID, keepNames []string) (int64, error)
 }
 
 // Collector polls a KubeSource and reconciles the results into the CMDB
@@ -216,6 +237,7 @@ func (c *Collector) poll(parent context.Context) {
 		c.ingestPods(ctx, namespaceIDsByName)
 		c.ingestWorkloads(ctx, namespaceIDsByName)
 		c.ingestServices(ctx, namespaceIDsByName)
+		c.ingestIngresses(ctx, namespaceIDsByName)
 	}
 }
 
@@ -502,6 +524,66 @@ func (c *Collector) ingestServices(ctx context.Context, namespaceIDsByName map[s
 		}
 	}
 	slog.Info("collector: ingested services", "upserted", upserted, "failed", failed, "skipped", skipped, "reconciled_deleted", reconciled, "cluster_name", c.clusterName)
+}
+
+// ingestIngresses lists ingresses cluster-wide, resolves each one's K8s
+// namespace name to the CMDB namespace UUID, and upserts it. Per-namespace
+// reconcile mirrors ingestServices.
+func (c *Collector) ingestIngresses(ctx context.Context, namespaceIDsByName map[string]uuid.UUID) {
+	ingresses, err := c.source.ListIngresses(ctx)
+	if err != nil {
+		slog.Warn("collector: list ingresses failed", "error", err, "cluster_name", c.clusterName)
+		return
+	}
+
+	keepByNS := make(map[uuid.UUID][]string)
+
+	var upserted, failed, skipped int
+	for _, ing := range ingresses {
+		nsID, ok := namespaceIDsByName[ing.Namespace]
+		if !ok {
+			slog.Warn("collector: ingress in unknown namespace; skipping", "ingress", ing.Name, "namespace", ing.Namespace, "cluster_name", c.clusterName)
+			skipped++
+			continue
+		}
+		in := api.IngressCreate{
+			NamespaceId:      nsID,
+			Name:             ing.Name,
+			IngressClassName: ptrIfNonEmpty(ing.IngressClassName),
+		}
+		if len(ing.Rules) > 0 {
+			rules := ing.Rules
+			in.Rules = &rules
+		}
+		if len(ing.TLS) > 0 {
+			tls := ing.TLS
+			in.Tls = &tls
+		}
+		if len(ing.Labels) > 0 {
+			labels := ing.Labels
+			in.Labels = &labels
+		}
+		if _, err := c.store.UpsertIngress(ctx, in); err != nil {
+			slog.Warn("collector: upsert ingress failed", "error", err, "ingress", ing.Name, "namespace", ing.Namespace, "cluster_name", c.clusterName)
+			failed++
+			continue
+		}
+		upserted++
+		keepByNS[nsID] = append(keepByNS[nsID], ing.Name)
+	}
+
+	var reconciled int64
+	if c.reconcile {
+		for _, nsID := range namespaceIDsByName {
+			n, err := c.store.DeleteIngressesNotIn(ctx, nsID, keepByNS[nsID])
+			if err != nil {
+				slog.Error("collector: reconcile ingresses failed", "error", err, "namespace_id", nsID, "cluster_name", c.clusterName)
+				continue
+			}
+			reconciled += n
+		}
+	}
+	slog.Info("collector: ingested ingresses", "upserted", upserted, "failed", failed, "skipped", skipped, "reconciled_deleted", reconciled, "cluster_name", c.clusterName)
 }
 
 func ptrIfNonEmpty(s string) *string {
