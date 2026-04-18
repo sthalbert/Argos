@@ -32,7 +32,10 @@ func newTestPG(t *testing.T) *PG {
 		t.Fatalf("migrate: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = pg.pool.Exec(context.Background(), "TRUNCATE clusters")
+		// CASCADE is required because nodes has a FK to clusters; without it
+		// a plain TRUNCATE fails when the nodes table is non-empty and test
+		// residue leaks across tests that share the same database.
+		_, _ = pg.pool.Exec(context.Background(), "TRUNCATE clusters CASCADE")
 		pg.Close()
 	})
 	return pg
