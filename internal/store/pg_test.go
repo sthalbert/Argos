@@ -91,6 +91,82 @@ func TestPGClusterCRUD(t *testing.T) {
 	}
 }
 
+func TestPGNodeCRUD(t *testing.T) {
+	pg := newTestPG(t)
+	ctx := context.Background()
+
+	cluster, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: "nodes-test"})
+	if err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+
+	kv := "v1.29.5"
+	node, err := pg.CreateNode(ctx, api.NodeCreate{
+		ClusterId:      *cluster.Id,
+		Name:           "node-a",
+		KubeletVersion: &kv,
+	})
+	if err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	if node.Id == nil {
+		t.Fatal("node.Id nil")
+	}
+
+	if _, err := pg.CreateNode(ctx, api.NodeCreate{ClusterId: *cluster.Id, Name: "node-a"}); !errors.Is(err, api.ErrConflict) {
+		t.Errorf("duplicate should be ErrConflict, got %v", err)
+	}
+
+	if _, err := pg.CreateNode(ctx, api.NodeCreate{ClusterId: uuid.New(), Name: "orphan"}); !errors.Is(err, api.ErrNotFound) {
+		t.Errorf("unknown cluster should be ErrNotFound, got %v", err)
+	}
+
+	got, err := pg.GetNode(ctx, *node.Id)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Name != "node-a" {
+		t.Errorf("name=%q", got.Name)
+	}
+	if got.KubeletVersion == nil || *got.KubeletVersion != kv {
+		t.Errorf("kubelet_version=%v", got.KubeletVersion)
+	}
+
+	arch := "arm64"
+	updated, err := pg.UpdateNode(ctx, *node.Id, api.NodeUpdate{Architecture: &arch})
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if updated.Architecture == nil || *updated.Architecture != arch {
+		t.Errorf("architecture=%v", updated.Architecture)
+	}
+
+	items, _, err := pg.ListNodes(ctx, cluster.Id, 10, "")
+	if err != nil {
+		t.Fatalf("list filtered: %v", err)
+	}
+	if len(items) != 1 {
+		t.Errorf("filtered list len=%d", len(items))
+	}
+
+	other := uuid.New()
+	items, _, err = pg.ListNodes(ctx, &other, 10, "")
+	if err != nil {
+		t.Fatalf("list foreign cluster: %v", err)
+	}
+	if len(items) != 0 {
+		t.Errorf("foreign-cluster list len=%d", len(items))
+	}
+
+	// FK cascade: deleting the cluster removes its nodes.
+	if err := pg.DeleteCluster(ctx, *cluster.Id); err != nil {
+		t.Fatalf("delete cluster: %v", err)
+	}
+	if _, err := pg.GetNode(ctx, *node.Id); !errors.Is(err, api.ErrNotFound) {
+		t.Errorf("node should have cascaded with cluster delete, got %v", err)
+	}
+}
+
 func TestPGListPagination(t *testing.T) {
 	pg := newTestPG(t)
 	ctx := context.Background()

@@ -26,6 +26,8 @@ tags:
     description: Liveness and readiness probes (unauthenticated).
   - name: clusters
     description: Kubernetes clusters registered in the CMDB.
+  - name: nodes
+    description: Kubernetes nodes (worker / control-plane machines) within a cluster.
 
 security:
   - BearerAuth: []
@@ -195,6 +197,137 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /v1/nodes:
+    get:
+      tags: [nodes]
+      summary: List nodes
+      operationId: listNodes
+      security:
+        - BearerAuth: [read]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/NodeClusterIdFilter'
+      responses:
+        '200':
+          description: Paged list of nodes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags: [nodes]
+      summary: Register a node
+      operationId: createNode
+      security:
+        - BearerAuth: [write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NodeCreate'
+      responses:
+        '201':
+          description: Node created.
+          headers:
+            Location:
+              description: URI of the newly created node.
+              schema:
+                type: string
+                format: uri
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /v1/nodes/{id}:
+    parameters:
+      - $ref: '#/components/parameters/NodeId'
+    get:
+      tags: [nodes]
+      summary: Get a node
+      operationId: getNode
+      security:
+        - BearerAuth: [read]
+      responses:
+        '200':
+          description: Node details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [nodes]
+      summary: Update mutable fields of a node
+      description: |
+        Merge-patch semantics: fields omitted from the body are unchanged.
+        `cluster_id` and `name` are immutable after creation.
+      operationId: updateNode
+      security:
+        - BearerAuth: [write]
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/NodeUpdate'
+      responses:
+        '200':
+          description: Updated node.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Node'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [nodes]
+      summary: Delete a node
+      operationId: deleteNode
+      security:
+        - BearerAuth: [delete]
+      responses:
+        '204':
+          description: Node deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
 components:
 
   securitySchemes:
@@ -221,6 +354,24 @@ components:
       in: path
       required: true
       description: Server-assigned cluster identifier.
+      schema:
+        type: string
+        format: uuid
+
+    NodeId:
+      name: id
+      in: path
+      required: true
+      description: Server-assigned node identifier.
+      schema:
+        type: string
+        format: uuid
+
+    NodeClusterIdFilter:
+      name: cluster_id
+      in: query
+      required: false
+      description: Return only nodes belonging to this cluster.
       schema:
         type: string
         format: uuid
@@ -421,6 +572,108 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Cluster'
+        next_cursor:
+          type: string
+          nullable: true
+          description: |
+            Opaque cursor to pass as `?cursor=` to fetch the next page.
+            Absent or null when no more pages remain.
+
+    NodeMutable:
+      description: Fields on a Node that clients may set and later update.
+      type: object
+      properties:
+        display_name:
+          type: string
+          maxLength: 256
+          description: Human-friendly label, free-form.
+        kubelet_version:
+          type: string
+          maxLength: 32
+          description: Kubelet git version as reported by Kubernetes (e.g. "v1.29.5").
+        os_image:
+          type: string
+          maxLength: 256
+          description: Node OS image string (e.g. "Ubuntu 22.04.3 LTS").
+        architecture:
+          type: string
+          maxLength: 32
+          description: |
+            CPU architecture. Open-ended; common values: amd64, arm64, ppc64le, s390x.
+        labels:
+          type: object
+          description: Arbitrary user-supplied string key/value labels.
+          additionalProperties:
+            type: string
+            maxLength: 256
+          maxProperties: 64
+
+    NodeCreate:
+      description: Payload to register a new node under a cluster.
+      allOf:
+        - $ref: '#/components/schemas/NodeMutable'
+        - type: object
+          required: [cluster_id, name]
+          properties:
+            cluster_id:
+              type: string
+              format: uuid
+              description: |
+                Parent cluster id. Immutable after creation; the cluster must
+                already exist or the create returns 404.
+            name:
+              type: string
+              description: |
+                Kubernetes node name (DNS-subdomain style). Unique per cluster.
+                Immutable after creation.
+              pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
+              minLength: 2
+              maxLength: 253
+
+    NodeUpdate:
+      description: |
+        Merge-patch body. Only mutable fields; `cluster_id` and `name` are
+        immutable. Omitted fields are left unchanged.
+      allOf:
+        - $ref: '#/components/schemas/NodeMutable'
+
+    Node:
+      description: A Kubernetes node registered in the CMDB.
+      allOf:
+        - $ref: '#/components/schemas/NodeMutable'
+        - type: object
+          required: [id, cluster_id, name, created_at, updated_at]
+          properties:
+            id:
+              type: string
+              format: uuid
+              readOnly: true
+            cluster_id:
+              type: string
+              format: uuid
+            name:
+              type: string
+              pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
+              minLength: 2
+              maxLength: 253
+            created_at:
+              type: string
+              format: date-time
+              readOnly: true
+            updated_at:
+              type: string
+              format: date-time
+              readOnly: true
+
+    NodeList:
+      description: Paged list of nodes.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Node'
         next_cursor:
           type: string
           nullable: true

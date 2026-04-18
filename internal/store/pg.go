@@ -262,6 +262,241 @@ func (p *PG) DeleteCluster(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// CreateNode inserts a new node. Returns api.ErrNotFound when the parent
+// cluster does not exist (FK violation), api.ErrConflict on duplicate
+// (cluster_id, name).
+func (p *PG) CreateNode(ctx context.Context, in api.NodeCreate) (api.Node, error) {
+	id := uuid.New()
+	now := time.Now().UTC()
+
+	labelsJSON, err := marshalLabels(in.Labels)
+	if err != nil {
+		return api.Node{}, err
+	}
+
+	const q = `
+		INSERT INTO nodes (
+			id, cluster_id, name, display_name, kubelet_version,
+			os_image, architecture, labels, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+	`
+	_, err = p.pool.Exec(ctx, q,
+		id, in.ClusterId, in.Name, in.DisplayName, in.KubeletVersion,
+		in.OsImage, in.Architecture, labelsJSON, now,
+	)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			switch pgErr.Code {
+			case "23505":
+				return api.Node{}, fmt.Errorf("node %q in cluster %s already exists: %w", in.Name, in.ClusterId, api.ErrConflict)
+			case "23503":
+				return api.Node{}, fmt.Errorf("cluster %s does not exist: %w", in.ClusterId, api.ErrNotFound)
+			}
+		}
+		return api.Node{}, fmt.Errorf("insert node: %w", err)
+	}
+
+	return api.Node{
+		Id:             &id,
+		ClusterId:      in.ClusterId,
+		Name:           in.Name,
+		DisplayName:    in.DisplayName,
+		KubeletVersion: in.KubeletVersion,
+		OsImage:        in.OsImage,
+		Architecture:   in.Architecture,
+		Labels:         in.Labels,
+		CreatedAt:      &now,
+		UpdatedAt:      &now,
+	}, nil
+}
+
+// GetNode fetches a node by id.
+func (p *PG) GetNode(ctx context.Context, id uuid.UUID) (api.Node, error) {
+	const q = `
+		SELECT id, cluster_id, name, display_name, kubelet_version,
+		       os_image, architecture, labels, created_at, updated_at
+		FROM nodes
+		WHERE id = $1
+	`
+	row := p.pool.QueryRow(ctx, q, id)
+	n, err := scanNode(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return api.Node{}, api.ErrNotFound
+		}
+		return api.Node{}, fmt.Errorf("select node: %w", err)
+	}
+	return n, nil
+}
+
+// ListNodes returns up to limit nodes sorted (created_at DESC, id DESC),
+// optionally filtered by cluster id.
+func (p *PG) ListNodes(ctx context.Context, clusterID *uuid.UUID, limit int, cursor string) ([]api.Node, string, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	sb := strings.Builder{}
+	sb.WriteString(`SELECT id, cluster_id, name, display_name, kubelet_version,
+	                       os_image, architecture, labels, created_at, updated_at
+	                FROM nodes`)
+	args := make([]any, 0, 4)
+	conds := make([]string, 0, 2)
+
+	if clusterID != nil {
+		args = append(args, *clusterID)
+		conds = append(conds, fmt.Sprintf("cluster_id = $%d", len(args)))
+	}
+	if cursor != "" {
+		ts, cid, err := decodeCursor(cursor)
+		if err != nil {
+			return nil, "", err
+		}
+		args = append(args, ts)
+		tsIdx := len(args)
+		args = append(args, cid)
+		idIdx := len(args)
+		conds = append(conds, fmt.Sprintf("(created_at, id) < ($%d, $%d)", tsIdx, idIdx))
+	}
+	if len(conds) > 0 {
+		sb.WriteString(" WHERE ")
+		sb.WriteString(strings.Join(conds, " AND "))
+	}
+	args = append(args, limit+1)
+	fmt.Fprintf(&sb, " ORDER BY created_at DESC, id DESC LIMIT $%d", len(args))
+
+	rows, err := p.pool.Query(ctx, sb.String(), args...)
+	if err != nil {
+		return nil, "", fmt.Errorf("query nodes: %w", err)
+	}
+	defer rows.Close()
+
+	items := make([]api.Node, 0, limit)
+	for rows.Next() {
+		n, err := scanNode(rows)
+		if err != nil {
+			return nil, "", fmt.Errorf("scan node: %w", err)
+		}
+		items = append(items, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", fmt.Errorf("iterate nodes: %w", err)
+	}
+
+	var next string
+	if len(items) > limit {
+		last := items[limit-1]
+		if last.CreatedAt != nil && last.Id != nil {
+			next = encodeCursor(*last.CreatedAt, *last.Id)
+		}
+		items = items[:limit]
+	}
+	return items, next, nil
+}
+
+// UpdateNode applies merge-patch semantics on mutable fields only.
+func (p *PG) UpdateNode(ctx context.Context, id uuid.UUID, in api.NodeUpdate) (api.Node, error) {
+	sets := make([]string, 0, 6)
+	args := make([]any, 0, 8)
+	idx := 1
+	appendSet := func(column string, value any) {
+		sets = append(sets, fmt.Sprintf("%s=$%d", column, idx))
+		args = append(args, value)
+		idx++
+	}
+
+	if in.DisplayName != nil {
+		appendSet("display_name", *in.DisplayName)
+	}
+	if in.KubeletVersion != nil {
+		appendSet("kubelet_version", *in.KubeletVersion)
+	}
+	if in.OsImage != nil {
+		appendSet("os_image", *in.OsImage)
+	}
+	if in.Architecture != nil {
+		appendSet("architecture", *in.Architecture)
+	}
+	if in.Labels != nil {
+		b, err := marshalLabels(in.Labels)
+		if err != nil {
+			return api.Node{}, err
+		}
+		appendSet("labels", b)
+	}
+	appendSet("updated_at", time.Now().UTC())
+	args = append(args, id)
+
+	q := fmt.Sprintf("UPDATE nodes SET %s WHERE id=$%d", strings.Join(sets, ", "), idx)
+	tag, err := p.pool.Exec(ctx, q, args...)
+	if err != nil {
+		return api.Node{}, fmt.Errorf("update node: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return api.Node{}, api.ErrNotFound
+	}
+	return p.GetNode(ctx, id)
+}
+
+// DeleteNode removes a node by id.
+func (p *PG) DeleteNode(ctx context.Context, id uuid.UUID) error {
+	tag, err := p.pool.Exec(ctx, "DELETE FROM nodes WHERE id=$1", id)
+	if err != nil {
+		return fmt.Errorf("delete node: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return api.ErrNotFound
+	}
+	return nil
+}
+
+func scanNode(row pgx.Row) (api.Node, error) {
+	var (
+		n               api.Node
+		id              uuid.UUID
+		clusterID       uuid.UUID
+		createdAt       time.Time
+		updatedAt       time.Time
+		displayName     sql.NullString
+		kubeletVersion  sql.NullString
+		osImage         sql.NullString
+		architecture    sql.NullString
+		labelsJSON      []byte
+	)
+	if err := row.Scan(
+		&id, &clusterID, &n.Name,
+		&displayName, &kubeletVersion, &osImage, &architecture,
+		&labelsJSON,
+		&createdAt, &updatedAt,
+	); err != nil {
+		return api.Node{}, err
+	}
+
+	n.Id = &id
+	n.ClusterId = clusterID
+	n.CreatedAt = &createdAt
+	n.UpdatedAt = &updatedAt
+	n.DisplayName = nullableString(displayName)
+	n.KubeletVersion = nullableString(kubeletVersion)
+	n.OsImage = nullableString(osImage)
+	n.Architecture = nullableString(architecture)
+
+	if len(labelsJSON) > 0 {
+		var labels map[string]string
+		if err := json.Unmarshal(labelsJSON, &labels); err != nil {
+			return api.Node{}, fmt.Errorf("unmarshal node labels: %w", err)
+		}
+		if len(labels) > 0 {
+			n.Labels = &labels
+		}
+	}
+	return n, nil
+}
+
 // marshalLabels encodes the optional labels map as JSON, preserving NULL-vs-empty semantics.
 func marshalLabels(labels *map[string]string) ([]byte, error) {
 	if labels == nil {

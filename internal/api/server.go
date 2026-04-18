@@ -6,6 +6,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+
+	"github.com/google/uuid"
 )
 
 // Server implements ServerInterface for the Argos REST API.
@@ -114,6 +116,92 @@ func (s *Server) UpdateCluster(w http.ResponseWriter, r *http.Request, id Cluste
 func (s *Server) DeleteCluster(w http.ResponseWriter, r *http.Request, id ClusterId) {
 	if err := s.store.DeleteCluster(r.Context(), id); err != nil {
 		s.writeStoreError(w, "deleteCluster", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListNodes returns a paged list of nodes, optionally filtered by cluster_id.
+func (s *Server) ListNodes(w http.ResponseWriter, r *http.Request, params ListNodesParams) {
+	limit := 0
+	if params.Limit != nil {
+		limit = *params.Limit
+	}
+	cursor := ""
+	if params.Cursor != nil {
+		cursor = *params.Cursor
+	}
+
+	items, next, err := s.store.ListNodes(r.Context(), params.ClusterId, limit, cursor)
+	if err != nil {
+		s.writeStoreError(w, "listNodes", err)
+		return
+	}
+
+	resp := NodeList{Items: items}
+	if next != "" {
+		resp.NextCursor = &next
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// CreateNode registers a new node under a cluster.
+func (s *Server) CreateNode(w http.ResponseWriter, r *http.Request) {
+	var body NodeCreate
+	if err := decodeJSONBody(r, &body); err != nil {
+		writeProblem(w, http.StatusBadRequest, "Invalid request body", err.Error())
+		return
+	}
+	if body.Name == "" {
+		writeProblem(w, http.StatusBadRequest, "Missing field", "field 'name' is required")
+		return
+	}
+	if body.ClusterId == (uuid.UUID{}) {
+		writeProblem(w, http.StatusBadRequest, "Missing field", "field 'cluster_id' is required")
+		return
+	}
+
+	n, err := s.store.CreateNode(r.Context(), body)
+	if err != nil {
+		s.writeStoreError(w, "createNode", err)
+		return
+	}
+
+	if n.Id != nil {
+		w.Header().Set("Location", "/v1/nodes/"+n.Id.String())
+	}
+	writeJSON(w, http.StatusCreated, n)
+}
+
+// GetNode fetches a node by id.
+func (s *Server) GetNode(w http.ResponseWriter, r *http.Request, id NodeId) {
+	n, err := s.store.GetNode(r.Context(), id)
+	if err != nil {
+		s.writeStoreError(w, "getNode", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, n)
+}
+
+// UpdateNode applies merge-patch updates to a node.
+func (s *Server) UpdateNode(w http.ResponseWriter, r *http.Request, id NodeId) {
+	var body NodeUpdate
+	if err := decodeJSONBody(r, &body); err != nil {
+		writeProblem(w, http.StatusBadRequest, "Invalid request body", err.Error())
+		return
+	}
+	n, err := s.store.UpdateNode(r.Context(), id, body)
+	if err != nil {
+		s.writeStoreError(w, "updateNode", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, n)
+}
+
+// DeleteNode removes a node.
+func (s *Server) DeleteNode(w http.ResponseWriter, r *http.Request, id NodeId) {
+	if err := s.store.DeleteNode(r.Context(), id); err != nil {
+		s.writeStoreError(w, "deleteNode", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
