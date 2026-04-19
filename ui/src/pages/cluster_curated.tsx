@@ -97,24 +97,28 @@ function ClusterCuratedForm({
   onCancel: () => void;
   onSaved: () => void;
 }) {
+  const [environment, setEnvironment] = useState(cluster.environment || '');
+  const [region, setRegion] = useState(cluster.region || '');
+  const [labelsText, setLabelsText] = useState(formatKV(cluster.labels));
   const [owner, setOwner] = useState(cluster.owner || '');
   const [criticality, setCriticality] = useState(cluster.criticality || '');
   const [notes, setNotes] = useState(cluster.notes || '');
   const [runbook, setRunbook] = useState(cluster.runbook_url || '');
-  const [annotationsText, setAnnotationsText] = useState(
-    formatAnnotations(cluster.annotations),
-  );
+  const [annotationsText, setAnnotationsText] = useState(formatKV(cluster.annotations));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
-    // Parse annotations as `key=value` one per line before PATCHing, so
-    // the user doesn't see JSON-parse errors for a trailing comma.
-    let annotations: Record<string, string> | undefined;
+    // Parse labels + annotations as `key=value` one per line before
+    // PATCHing, so the user doesn't see JSON-parse errors for a
+    // trailing comma.
+    let labels: Record<string, string>;
+    let annotations: Record<string, string>;
     try {
-      annotations = parseAnnotations(annotationsText);
+      labels = parseKV(labelsText, 'labels');
+      annotations = parseKV(annotationsText, 'annotations');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       return;
@@ -123,6 +127,9 @@ function ClusterCuratedForm({
     try {
       if (!cluster.id) throw new Error('cluster missing id');
       await api.updateCluster(cluster.id, {
+        environment: environment.trim(),
+        region: region.trim(),
+        labels: labels,
         owner: owner.trim(),
         criticality: criticality.trim(),
         notes: notes,
@@ -144,6 +151,39 @@ function ClusterCuratedForm({
       </div>
       <form className="admin-form" onSubmit={onSubmit}>
         <div className="admin-form-row">
+          <div>
+            <label>Environment</label>
+            <input
+              type="text"
+              value={environment}
+              onChange={(e) => setEnvironment(e.target.value)}
+              placeholder="dev / staging / prod"
+            />
+          </div>
+          <div>
+            <label>Region</label>
+            <input
+              type="text"
+              value={region}
+              onChange={(e) => setRegion(e.target.value)}
+              placeholder="eu-west-1 / paris-a"
+            />
+          </div>
+        </div>
+        <div style={{ marginTop: '0.75rem' }}>
+          <label>Labels (one key=value per line)</label>
+          <textarea
+            value={labelsText}
+            onChange={(e) => setLabelsText(e.target.value)}
+            rows={3}
+            style={{
+              width: '100%',
+              fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace',
+            }}
+          />
+        </div>
+
+        <div className="admin-form-row" style={{ marginTop: '0.75rem' }}>
           <div>
             <label>Owner</label>
             <input
@@ -207,25 +247,28 @@ function ClusterCuratedForm({
   );
 }
 
-function formatAnnotations(a?: Record<string, string> | null): string {
-  if (!a) return '';
-  return Object.entries(a)
+// formatKV / parseKV serialize a `Record<string, string>` as one
+// `key=value` per line. Used for both `labels` and `annotations` — the
+// shapes are identical, just different JSONB columns server-side.
+function formatKV(m?: Record<string, string> | null): string {
+  if (!m) return '';
+  return Object.entries(m)
     .map(([k, v]) => `${k}=${v}`)
     .join('\n');
 }
 
-function parseAnnotations(text: string): Record<string, string> | undefined {
+function parseKV(text: string, fieldName: string): Record<string, string> {
   const out: Record<string, string> = {};
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
   if (lines.length === 0) return {};
   for (const line of lines) {
     const eq = line.indexOf('=');
     if (eq <= 0) {
-      throw new Error(`annotations: expected key=value, got ${line.slice(0, 40)}`);
+      throw new Error(`${fieldName}: expected key=value, got ${line.slice(0, 40)}`);
     }
     const k = line.slice(0, eq).trim();
     const v = line.slice(eq + 1).trim();
-    if (!k) throw new Error(`annotations: empty key in line ${line.slice(0, 40)}`);
+    if (!k) throw new Error(`${fieldName}: empty key in line ${line.slice(0, 40)}`);
     out[k] = v;
   }
   return out;
