@@ -237,8 +237,6 @@ func methodVerb(lower string) string {
 	return lower
 }
 
-func ptr[T any](v T) *T { return &v }
-
 // scrubSecrets redacts password / token / secret-like fields from a
 // captured JSON body. The goal is "don't write the admin's password to
 // a long-lived table"; it's not a security boundary — anything the
