@@ -15,7 +15,7 @@ For multi-cluster operation (one argosd cataloguing N clusters via mounted kubec
 | File | Purpose |
 |---|---|
 | `namespace.yaml` | `argos-system` namespace |
-| `rbac.yaml` | ServiceAccount + ClusterRole (`list` on the six kinds the collector ingests) + ClusterRoleBinding |
+| `rbac.yaml` | ServiceAccount + ClusterRole (`list` on the kinds the collector ingests — see [RBAC scope](#rbac-scope)) + ClusterRoleBinding |
 | `deployment.yaml` | Single-replica `argosd` with probes, resource limits, non-root security context |
 | `service.yaml` | ClusterIP Service on port 8080 |
 | `kustomization.yaml` | Applies everything above with one `kubectl apply -k` |
@@ -76,13 +76,32 @@ curl -sS -X POST http://localhost:8080/v1/clusters \
   -d '{"name":"in-cluster","display_name":"Self","environment":"dev"}'
 ```
 
-On the next tick (≤ 5 minutes with defaults) the collector will refresh `kubernetes_version` and populate nodes, namespaces, pods, workloads, services, ingresses.
+On the next tick (≤ 5 minutes with defaults) the collector will refresh `kubernetes_version` and populate nodes, namespaces, pods, workloads, services, ingresses, persistent volumes, and persistent volume claims.
 
 Verify:
 
 ```sh
 curl -sS -H "Authorization: Bearer TOKEN" http://localhost:8080/v1/namespaces | jq '.items | length'
 ```
+
+### Demo data without a cluster
+
+If you just want to explore the UI without pointing the collector at a real
+cluster, the repo ships [`scripts/seed-demo.sh`](../scripts/seed-demo.sh) —
+run it against a local argosd + Postgres (token `dev`) and it POSTs a
+realistic multi-cluster inventory (prod + staging, workloads, pods,
+services, a MetalLB-style ingress). See the script header for details.
+
+## Web UI
+
+The React SPA ships inside the same binary at `/ui/`. Port-forward the service and point a browser at `/` (it redirects to `/ui/`):
+
+```sh
+kubectl -n argos-system port-forward svc/argosd 8080:8080 &
+open http://localhost:8080/          # paste the bearer token to sign in
+```
+
+The UI is served unauthenticated (static assets only); the API calls it makes from the browser carry the bearer token you enter on the login page. See [`ui/README.md`](../ui/README.md) for the page-by-page map.
 
 ## Metrics
 
@@ -102,7 +121,7 @@ Exported series:
 | `argos_collector_last_poll_timestamp_seconds` | gauge | `cluster`, `resource` |
 | `argos_build_info` | gauge | `version`, `go_version` |
 
-`phase` on `errors_total` is one of `list` / `upsert` / `reconcile` / `lookup`. `resource` is one of `version` / `cluster` / `nodes` / `namespaces` / `pods` / `workloads` / `services` / `ingresses`. Plus the default `go_*` and `process_*` collectors from `client_golang`.
+`phase` on `errors_total` is one of `list` / `upsert` / `reconcile` / `lookup`. `resource` is one of `version` / `cluster` / `nodes` / `namespaces` / `pods` / `workloads` / `services` / `ingresses` / `persistentvolumes` / `persistentvolumeclaims` / `replicasets`. Plus the default `go_*` and `process_*` collectors from `client_golang`.
 
 A simple freshness alert:
 
@@ -112,10 +131,10 @@ time() - argos_collector_last_poll_timestamp_seconds{resource="nodes"} > 600
 
 ## RBAC scope
 
-`rbac.yaml` grants strictly `list` on the six K8s resource kinds argosd currently ingests:
+`rbac.yaml` grants strictly `list` on the K8s resource kinds argosd currently ingests:
 
-- `nodes`, `namespaces`, `pods`, `services` (core API group)
-- `deployments`, `statefulsets`, `daemonsets` (`apps` API group)
+- `nodes`, `namespaces`, `pods`, `services`, `persistentvolumes`, `persistentvolumeclaims` (core API group)
+- `deployments`, `statefulsets`, `daemonsets`, `replicasets` (`apps` API group — `replicasets` is needed to walk the Pod → ReplicaSet → Deployment ownerReference chain)
 - `ingresses` (`networking.k8s.io` API group)
 
 No `get`, no `watch`, no access to Secret / ConfigMap contents, no write of any kind. Argosd is read-only by design — the CMDB is a cartography tool, never a controller.

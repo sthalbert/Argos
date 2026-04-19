@@ -6,6 +6,35 @@ Vite + React + TypeScript SPA. Served by `argosd` at `/ui/` in production via
 See [ADR-0006](../docs/adr/adr-0006-ui-for-audit-and-curated-metadata.md) for
 scope and rationale.
 
+## What it does today
+
+- **List pages** for all nine top-level kinds — Clusters, Namespaces, Nodes,
+  Workloads, Pods, Services, Ingresses, PersistentVolumes,
+  PersistentVolumeClaims — each with kind-specific columns (Node role / zone /
+  instance-type / CPU-mem / Ready status; Ingress / Service load-balancer
+  address; PVC bound PV; Workload container images; etc.).
+- **Detail pages** for the core drill-down chain:
+  - **Cluster** → namespaces + nodes + PVs inside it.
+  - **Namespace** → workloads + pods + services + ingresses + PVCs
+    ("application = namespace" view).
+  - **Workload** → its pods (via `workload_id`), unique nodes they run on,
+    container template ("application = workload" view).
+  - **Pod** → containers with `image_id` digests + backlinks to parent
+    workload / namespace.
+  - **Node** → full Mercator-aligned view (Identity, OS & runtime,
+    Networking, capacity + allocatable table, Conditions with per-row
+    health colouring, Taints, Labels) plus an impact-analysis callout
+    and a workload-grouped pod breakdown.
+  - **Ingress** → load-balancer block first (MetalLB / Kube-VIP / hardware
+    LB VIP), then routing rules and TLS.
+- **Component search** (`/ui/search/image`) — case-insensitive substring
+  match across every container's `image` string on both Workloads and Pods
+  (init containers included). Query is kept in the URL so auditors can
+  bookmark or share a hit list ("every asset running `log4j:2.15`").
+- **Auth** — paste a bearer token on `/ui/login`, held in `sessionStorage`
+  (cleared on tab close, per ADR-0006). No cookies, no CORS — the SPA is
+  same-origin as the API.
+
 ## Development loop
 
 ```bash
@@ -19,6 +48,10 @@ ARGOS_DATABASE_URL=postgres://... ARGOS_API_TOKEN=dev ./bin/argosd
 make ui-dev
 # → open http://localhost:5173/ui/
 ```
+
+For a one-command demo with seeded data, run `bash scripts/seed-demo.sh`
+after argosd is up — it populates a realistic prod / staging inventory so
+every list page has something to show.
 
 ## Production build
 
@@ -46,8 +79,32 @@ ui/
     ├── main.tsx          # router + strict mode
     ├── App.tsx           # routes + auth gate + chrome
     ├── api.ts            # hand-written typed fetch wrapper
-    ├── styles.css
+    ├── hooks.ts          # useResource / useResources (loading/error/data)
+    ├── components.tsx    # shared primitives: AsyncView, LayerPill,
+    │                     # LoadBalancerAddresses, Labels, KV, IdLink, …
+    ├── styles.css        # dark theme, status pills, LB chips, kv-list grid
     └── pages/
         ├── Login.tsx     # bearer token -> sessionStorage
-        └── Clusters.tsx  # first list page
+        ├── Lists.tsx     # all nine list pages in one file
+        ├── Details.tsx   # Cluster / Namespace / Workload / Pod / Node / Ingress detail
+        └── Search.tsx    # image-substring search (workloads + pods)
 ```
+
+## Design choices
+
+- **Hand-written API client** (`src/api.ts`) over OpenAPI codegen — the
+  surface is still small and the hand-written form is easier to skim for
+  now. Swap to codegen (`openapi-typescript-codegen` or similar) when the
+  number of endpoints makes drift likely.
+- **List and detail pages in two files** (`Lists.tsx`, `Details.tsx`)
+  instead of one-file-per-page. Keeps imports and shared helpers
+  (`NamespaceLink`, `useNamespaceIndex`) close to their call sites; every
+  page stays small enough that a single file scan is fine.
+- **`useResource` / `useResources`** hooks fold the loading / error / data
+  tri-state plus the "401 → drop token → /login" rule in one place so
+  every page reads like a straight render.
+- **`AsyncView` nesting** instead of `Promise.all` in every page — a top-
+  level `useResources(() => [...])` works when all fetches share the same
+  input keys, but when a second fetch depends on the first's result
+  (NamespaceDetail → Cluster, Node → pods filtered by node.name) a chain
+  of `useResource` is clearer than building a reducer.

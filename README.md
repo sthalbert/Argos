@@ -17,12 +17,31 @@ against real clusters; expect additive changes until 1.0.
 
 ## What ships today
 
+### Data model
+
 - **Polling collector** against one or more Kubernetes clusters, covering
   Clusters, Nodes, Namespaces, Workloads (Deployment / StatefulSet / DaemonSet,
-  polymorphic per [ADR-0003](docs/adr/adr-0003-workload-polymorphism.md)), Pods
-  (with `workload_id` back-reference walked through the ownerReference chain),
-  Services, Ingresses, PersistentVolumes, and PersistentVolumeClaims (with
-  `bound_volume_id` FK to the backing PV).
+  polymorphic per [ADR-0003](docs/adr/adr-0003-workload-polymorphism.md)), Pods,
+  Services, Ingresses, PersistentVolumes, and PersistentVolumeClaims.
+- **Relationship FKs** resolved at ingest time:
+  - Pod → controlling Workload (`workload_id`), walked via the K8s
+    ownerReference chain — ReplicaSet → Deployment in one hop, direct for
+    StatefulSet / DaemonSet.
+  - PVC → bound PV (`bound_volume_id`), resolved against the PV name map each
+    tick. Both FKs use `ON DELETE SET NULL` so deletion of the parent leaves
+    the child to the reconcile pass rather than cascading.
+- **Mercator-aligned Node model** — role (control-plane / worker), cloud
+  identity (`provider_id`, `instance_type`, `zone`), networking
+  (`internal_ip`, `external_ip`, `pod_cidr`), full OS stack
+  (`kernel_version`, `operating_system`, `container_runtime_version`,
+  `kube_proxy_version`), capacity + allocatable quadruples for
+  cpu / memory / pods / ephemeral_storage, status conditions + scheduling
+  taints, and `ready` / `unschedulable` flags.
+- **External load balancer** on Ingress and Service (`load_balancer` JSONB)
+  mirroring `status.loadBalancer.ingress[]` — populated by the cloud
+  controller on managed clusters, or by MetalLB / Kube-VIP / a hardware LB
+  on-prem. Answers "what's the external entry point for this thing?"
+  without bouncing into kubectl.
 - **Reconciliation**: rows that vanish from the live listing are deleted so
   the CMDB mirrors the cluster — required for SNC cartography fidelity.
   Toggleable; disabled reverts to pure append behaviour.
@@ -33,23 +52,60 @@ against real clusters; expect additive changes until 1.0.
   [ADR-0002](docs/adr/adr-0002-kubernetes-to-anssi-cartography-layers.md)
   (`ecosystem` / `business` / `applicative` / `administration` /
   `infrastructure_logical` / `infrastructure_physical`).
-- **REST API** (OpenAPI 3.1 contract-first, `api/openapi/openapi.yaml`) with
+
+### API
+
+- **REST** (OpenAPI 3.1 contract-first, `api/openapi/openapi.yaml`) with
   cursor pagination and merge-patch updates. Errors follow
   [RFC 7807](https://datatracker.ietf.org/doc/html/rfc7807)
   (`application/problem+json`).
 - **Bearer-token auth** with per-operation scopes (`read` / `write` / `delete`
   / `admin`) declared in the spec and enforced server-side.
-- **Web UI** (React + TypeScript SPA embedded in the binary at `/ui/`) — see
-  [ADR-0006](docs/adr/adr-0006-ui-for-audit-and-curated-metadata.md). Currently
-  ships a login page and a Clusters list; more views and curated-metadata
-  editing land in follow-up increments.
+- **Filter endpoints** for incident-response queries:
+  - `GET /v1/workloads?image=log4j:2.15` — case-insensitive substring match
+    over every container's `image` field, init containers included.
+  - `GET /v1/pods?image=…` — same shape for pods.
+  - `GET /v1/pods?node_name=worker-02.prod` — exact match; powers the
+    "if this node dies, which pods are lost?" view.
+
+### Web UI
+
+React + TypeScript SPA embedded in the binary at `/ui/` — see
+[ADR-0006](docs/adr/adr-0006-ui-for-audit-and-curated-metadata.md).
+
+- **List pages** for all 9 kinds with context-aware columns (Node role /
+  zone / instance-type / CPU-mem / Ready status; Ingress / Service
+  load-balancer address; PVC bound PV; Workload container images; …).
+- **Drill-down detail pages** for the core cartography chain
+  (Cluster → Namespace → Workload → Pod; Cluster → Node). Namespace detail
+  aggregates every asset in it ("application = namespace" view); Workload
+  detail aggregates its pods + unique nodes ("application = workload" view).
+- **Node detail** renders the full Mercator-aligned picture — Identity,
+  OS & runtime, Networking, Resources (capacity vs allocatable), Conditions
+  with per-row health colouring, Taints, Labels — plus an impact-analysis
+  callout and a workload-grouped breakdown of affected pods.
+- **Ingress detail** renders the load-balancer block first, then routing
+  rules and TLS, so on-prem auditors can see the VIP at a glance.
+- **Component search** (`/ui/search/image`) with URL-persisted query —
+  find every workload + pod running `log4j:2.15.0`, grouped by
+  cluster / namespace with clickable breadcrumbs.
+- Bearer token kept in `sessionStorage` (cleared on tab close); no cookies,
+  no CORS, same-origin as the API.
+
+### Ops
+
 - **Prometheus metrics** at `/metrics` (HTTP + collector upsert / reconcile /
   error counters, per-resource last-poll gauges, `argos_build_info`).
 - **Container image** built from a multi-stage Dockerfile
   (`gcr.io/distroless/static-debian12:nonroot`, UID 65532, static CGO-off
-  binary).
+  binary). A first stage builds the UI bundle with `node:22-alpine`; the
+  Go stage embeds it via `//go:embed`.
 - **Kustomize manifests** under `deploy/` for running argosd inside a
   Kubernetes cluster as its own collector target.
+- **Demo seed** — `scripts/seed-demo.sh` populates a realistic
+  multi-cluster inventory (prod/staging × 6 namespaces × workloads + pods
+  + services + one MetalLB-style ingress) so the UI has something to show
+  without a real cluster.
 
 ## Stack
 
