@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -17,8 +18,8 @@ const (
 )
 
 // PollError represents a collector error tied to a specific resource and
-// operation. It centralizes metric recording and structured logging so
-// call sites don't repeat the observe+log boilerplate.
+// operation. It carries enough context for the single top-level handler to
+// record metrics and emit a structured log line.
 type PollError struct {
 	// ClusterName identifies the target cluster.
 	ClusterName string
@@ -44,28 +45,7 @@ func (e *PollError) Unwrap() error {
 	return e.Err
 }
 
-// Report records the error in Prometheus metrics and emits a structured log
-// line at the appropriate severity. Call this once at the error site; the
-// caller retains control flow (return, continue, etc.).
-func (e *PollError) Report() {
-	metrics.ObserveError(e.ClusterName, e.Resource, e.Operation)
-
-	attrs := make([]any, 0, 4+len(e.Attrs)*2)
-	attrs = append(attrs, "error", e.Err, "cluster_name", e.ClusterName)
-	for _, a := range e.Attrs {
-		attrs = append(attrs, a.Key, a.Value)
-	}
-
-	msg := fmt.Sprintf("collector: %s %s failed", e.Operation, e.Resource)
-	switch e.Severity {
-	case SeverityError:
-		slog.Error(msg, attrs...)
-	default:
-		slog.Warn(msg, attrs...)
-	}
-}
-
-// pollErr is a convenience constructor for the common case.
+// pollErr is a convenience constructor.
 func pollErr(clusterName, resource, operation string, err error, severity Severity, attrs ...slog.Attr) *PollError {
 	return &PollError{
 		ClusterName: clusterName,
@@ -74,5 +54,31 @@ func pollErr(clusterName, resource, operation string, err error, severity Severi
 		Err:         err,
 		Severity:    severity,
 		Attrs:       attrs,
+	}
+}
+
+// handlePollError is the single place where poll errors are handled:
+// record Prometheus metric + emit structured log at the appropriate level.
+func handlePollError(err error) {
+	var pe *PollError
+	if !errors.As(err, &pe) {
+		slog.Error("collector: unexpected error", "error", err)
+		return
+	}
+
+	metrics.ObserveError(pe.ClusterName, pe.Resource, pe.Operation)
+
+	attrs := make([]any, 0, 4+len(pe.Attrs)*2)
+	attrs = append(attrs, "error", pe.Err, "cluster_name", pe.ClusterName)
+	for _, a := range pe.Attrs {
+		attrs = append(attrs, a.Key, a.Value)
+	}
+
+	msg := fmt.Sprintf("collector: %s %s failed", pe.Operation, pe.Resource)
+	switch pe.Severity {
+	case SeverityError:
+		slog.Error(msg, attrs...)
+	default:
+		slog.Warn(msg, attrs...)
 	}
 }

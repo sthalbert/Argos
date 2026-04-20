@@ -294,14 +294,20 @@ func New(store cmdbStore, source KubeSource, clusterName string, interval, fetch
 }
 
 // Run polls until ctx is cancelled. A poll happens immediately on start and
-// every interval thereafter.
+// every interval thereafter. This is the single place where poll errors are
+// handled: each error is logged and recorded in Prometheus metrics, then the
+// loop continues to the next tick.
 func (c *Collector) Run(ctx context.Context) error {
 	slog.Info("collector starting", "cluster_name", c.clusterName, "interval", c.interval)
 
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
 
-	c.poll(ctx)
+	if err := c.poll(ctx); err != nil {
+		for _, e := range unwrapAll(err) {
+			handlePollError(e)
+		}
+	}
 
 	for {
 		select {
@@ -309,78 +315,110 @@ func (c *Collector) Run(ctx context.Context) error {
 			slog.Info("collector stopping", "reason", ctx.Err())
 			return ctx.Err()
 		case <-ticker.C:
-			c.poll(ctx)
+			if err := c.poll(ctx); err != nil {
+				for _, e := range unwrapAll(err) {
+					handlePollError(e)
+				}
+			}
 		}
 	}
 }
 
-// poll performs one polling cycle: refresh cluster version, then ingest nodes.
-// Errors are logged and swallowed; the caller's ticker is unaffected.
-func (c *Collector) poll(parent context.Context) {
+// unwrapAll splits a (possibly joined) error into individual errors.
+func unwrapAll(err error) []error {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		return joined.Unwrap()
+	}
+	return []error{err}
+}
+
+// poll performs one polling cycle: refresh cluster version, then ingest all
+// resources. Returns a (possibly joined) error containing every PollError
+// that occurred during the cycle. The caller decides how to handle them.
+func (c *Collector) poll(parent context.Context) error {
 	ctx, cancel := context.WithTimeout(parent, c.fetchTimeout)
 	defer cancel()
 
+	var errs []error
+
 	version, err := c.source.ServerVersion(ctx)
 	if err != nil {
-		pollErr(c.clusterName, "version", "list", err, SeverityWarn).Report()
-		return
+		return pollErr(c.clusterName, "version", "list", err, SeverityWarn)
 	}
 	metrics.MarkPoll(c.clusterName, "version")
 
 	cluster, err := c.store.GetClusterByName(ctx, c.clusterName)
 	if err != nil {
+		sev := SeverityError
 		if errors.Is(err, api.ErrNotFound) {
-			pollErr(c.clusterName, "cluster", "lookup", err, SeverityWarn).Report()
-		} else {
-			pollErr(c.clusterName, "cluster", "lookup", err, SeverityError).Report()
+			sev = SeverityWarn
 		}
-		return
+		return pollErr(c.clusterName, "cluster", "lookup", err, sev)
 	}
 	if cluster.Id == nil {
-		pollErr(c.clusterName, "cluster", "lookup", fmt.Errorf("stored cluster has nil id"), SeverityError).Report()
-		return
+		return pollErr(c.clusterName, "cluster", "lookup", fmt.Errorf("stored cluster has nil id"), SeverityError)
 	}
 
 	if cluster.KubernetesVersion == nil || *cluster.KubernetesVersion != version {
 		if _, err := c.store.UpdateCluster(ctx, *cluster.Id, api.ClusterUpdate{KubernetesVersion: &version}); err != nil {
-			pollErr(c.clusterName, "cluster", "upsert", err, SeverityError).Report()
-			return
+			return pollErr(c.clusterName, "cluster", "upsert", err, SeverityError)
 		}
 		metrics.ObserveUpserts(c.clusterName, "cluster", 1)
 		slog.Info("collector: refreshed cluster version", "cluster_name", c.clusterName, "version", version)
 	}
 
-	c.ingestNodes(ctx, *cluster.Id)
+	if err := c.ingestNodes(ctx, *cluster.Id); err != nil {
+		errs = append(errs, err)
+	}
 	// PVs are cluster-scoped — they don't depend on namespaces so we ingest
 	// them before namespace-scoped resources. The returned (pv-name -> id)
 	// map is used by ingestPersistentVolumeClaims to resolve bound_volume_id.
-	pvIDsByName := c.ingestPersistentVolumes(ctx, *cluster.Id)
-	namespaceIDsByName := c.ingestNamespaces(ctx, *cluster.Id)
+	pvIDsByName, err := c.ingestPersistentVolumes(ctx, *cluster.Id)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	namespaceIDsByName, err := c.ingestNamespaces(ctx, *cluster.Id)
+	if err != nil {
+		errs = append(errs, err)
+	}
+
 	if namespaceIDsByName != nil {
 		// Workloads go first so ingestPods can resolve each pod's top-level
 		// controller into a workload_id FK. ingestWorkloads returns a
 		// per-namespace (kind, name) -> id map that stays nil on list error,
 		// signalling ingestPods to write pods with workload_id unset.
-		workloadIDs := c.ingestWorkloads(ctx, namespaceIDsByName)
-		c.ingestPods(ctx, namespaceIDsByName, workloadIDs)
-		c.ingestServices(ctx, namespaceIDsByName)
-		c.ingestIngresses(ctx, namespaceIDsByName)
-		c.ingestPersistentVolumeClaims(ctx, namespaceIDsByName, pvIDsByName)
+		workloadIDs, err := c.ingestWorkloads(ctx, namespaceIDsByName)
+		if err != nil {
+			errs = append(errs, err)
+		}
+		if err := c.ingestPods(ctx, namespaceIDsByName, workloadIDs); err != nil {
+			errs = append(errs, err)
+		}
+		if err := c.ingestServices(ctx, namespaceIDsByName); err != nil {
+			errs = append(errs, err)
+		}
+		if err := c.ingestIngresses(ctx, namespaceIDsByName); err != nil {
+			errs = append(errs, err)
+		}
+		if err := c.ingestPersistentVolumeClaims(ctx, namespaceIDsByName, pvIDsByName); err != nil {
+			errs = append(errs, err)
+		}
 	}
+
+	return errors.Join(errs...)
 }
 
 // ingestNodes lists nodes from the kube source and upserts each into the
-// store under the given cluster. Individual node failures are logged and
-// skipped; the loop continues so one bad node doesn't block the rest. When
-// reconcile is enabled, nodes in the CMDB that no longer appear in the live
-// listing are deleted so stored state matches the cluster.
-func (c *Collector) ingestNodes(ctx context.Context, clusterID uuid.UUID) {
+// store under the given cluster. Returns a joined error of all failures
+// (list, upsert, reconcile). Individual upsert failures don't block the rest.
+func (c *Collector) ingestNodes(ctx context.Context, clusterID uuid.UUID) error {
 	nodes, err := c.source.ListNodes(ctx)
 	if err != nil {
-		pollErr(c.clusterName, "nodes", "list", err, SeverityWarn).Report()
-		return
+		return pollErr(c.clusterName, "nodes", "list", err, SeverityWarn)
 	}
 
+	var errs []error
 	var upserted, failed int
 	keepNames := make([]string, 0, len(nodes))
 	for _, n := range nodes {
@@ -426,7 +464,7 @@ func (c *Collector) ingestNodes(ctx context.Context, clusterID uuid.UUID) {
 			in.Labels = &labels
 		}
 		if _, err := c.store.UpsertNode(ctx, in); err != nil {
-			pollErr(c.clusterName, "nodes", "upsert", err, SeverityWarn, slog.String("node", n.Name)).Report()
+			errs = append(errs, pollErr(c.clusterName, "nodes", "upsert", err, SeverityWarn, slog.String("node", n.Name)))
 			failed++
 			continue
 		}
@@ -439,28 +477,26 @@ func (c *Collector) ingestNodes(ctx context.Context, clusterID uuid.UUID) {
 	if c.reconcile {
 		n, err := c.store.DeleteNodesNotIn(ctx, clusterID, keepNames)
 		if err != nil {
-			pollErr(c.clusterName, "nodes", "reconcile", err, SeverityError).Report()
+			errs = append(errs, pollErr(c.clusterName, "nodes", "reconcile", err, SeverityError))
 		}
 		reconciled = n
 		metrics.ObserveReconciled(c.clusterName, "nodes", n)
 	}
 	metrics.MarkPoll(c.clusterName, "nodes")
 	slog.Info("collector: ingested nodes", "upserted", upserted, "failed", failed, "reconciled_deleted", reconciled, "cluster_name", c.clusterName)
+	return errors.Join(errs...)
 }
 
 // ingestNamespaces lists namespaces from the kube source and upserts each
-// into the store under the given cluster. When reconcile is enabled,
-// namespaces in the CMDB that no longer appear in the live listing are
-// deleted so stored state matches the cluster. Returns a name -> id map the
-// pod-ingestion pass uses to resolve each pod's FK, or nil on list failure
-// (signal to the caller to skip pod ingestion).
-func (c *Collector) ingestNamespaces(ctx context.Context, clusterID uuid.UUID) map[string]uuid.UUID {
+// into the store under the given cluster. Returns a name -> id map (nil on
+// list failure) and a joined error of all failures.
+func (c *Collector) ingestNamespaces(ctx context.Context, clusterID uuid.UUID) (map[string]uuid.UUID, error) {
 	namespaces, err := c.source.ListNamespaces(ctx)
 	if err != nil {
-		pollErr(c.clusterName, "namespaces", "list", err, SeverityWarn).Report()
-		return nil
+		return nil, pollErr(c.clusterName, "namespaces", "list", err, SeverityWarn)
 	}
 
+	var errs []error
 	var upserted, failed int
 	keepNames := make([]string, 0, len(namespaces))
 	idsByName := make(map[string]uuid.UUID, len(namespaces))
@@ -476,7 +512,7 @@ func (c *Collector) ingestNamespaces(ctx context.Context, clusterID uuid.UUID) m
 		}
 		stored, err := c.store.UpsertNamespace(ctx, in)
 		if err != nil {
-			pollErr(c.clusterName, "namespaces", "upsert", err, SeverityWarn, slog.String("namespace", ns.Name)).Report()
+			errs = append(errs, pollErr(c.clusterName, "namespaces", "upsert", err, SeverityWarn, slog.String("namespace", ns.Name)))
 			failed++
 			continue
 		}
@@ -492,14 +528,14 @@ func (c *Collector) ingestNamespaces(ctx context.Context, clusterID uuid.UUID) m
 	if c.reconcile {
 		n, err := c.store.DeleteNamespacesNotIn(ctx, clusterID, keepNames)
 		if err != nil {
-			pollErr(c.clusterName, "namespaces", "reconcile", err, SeverityError).Report()
+			errs = append(errs, pollErr(c.clusterName, "namespaces", "reconcile", err, SeverityError))
 		}
 		reconciled = n
 		metrics.ObserveReconciled(c.clusterName, "namespaces", n)
 	}
 	metrics.MarkPoll(c.clusterName, "namespaces")
 	slog.Info("collector: ingested namespaces", "upserted", upserted, "failed", failed, "reconciled_deleted", reconciled, "cluster_name", c.clusterName)
-	return idsByName
+	return idsByName, errors.Join(errs...)
 }
 
 // wlKey uniquely identifies a workload within a namespace — the (kind, name)
@@ -547,21 +583,16 @@ func resolveWorkloadID(
 }
 
 // ingestPods lists pods from the kube source, resolves each pod's parent
-// namespace via namespaceIDsByName, and upserts it. Pods whose namespace
-// isn't in the live map (either the namespace disappeared this tick or the
-// lookup never ran) are skipped rather than written against a guessed
-// parent. When reconcile is enabled, every live namespace is reconciled
-// independently so empty namespaces have their stale pods cleared too.
-//
-// workloadIDs may be nil (list-workloads failure) in which case pods are
-// still upserted, just without workload_id set — the next successful poll
-// will backfill the FK.
-func (c *Collector) ingestPods(ctx context.Context, namespaceIDsByName map[string]uuid.UUID, workloadIDs map[uuid.UUID]map[wlKey]uuid.UUID) {
+// namespace via namespaceIDsByName, and upserts it. Returns a joined error
+// of all failures. workloadIDs may be nil (list-workloads failure) in which
+// case pods are still upserted without workload_id.
+func (c *Collector) ingestPods(ctx context.Context, namespaceIDsByName map[string]uuid.UUID, workloadIDs map[uuid.UUID]map[wlKey]uuid.UUID) error {
 	pods, err := c.source.ListPods(ctx)
 	if err != nil {
-		pollErr(c.clusterName, "pods", "list", err, SeverityWarn).Report()
-		return
+		return pollErr(c.clusterName, "pods", "list", err, SeverityWarn)
 	}
+
+	var errs []error
 
 	// Fetch ReplicaSet owners only if we have workloads to resolve into. A
 	// list failure here degrades gracefully: pods owned by ReplicaSets end
@@ -570,7 +601,7 @@ func (c *Collector) ingestPods(ctx context.Context, namespaceIDsByName map[strin
 	if workloadIDs != nil {
 		rss, err := c.source.ListReplicaSetOwners(ctx)
 		if err != nil {
-			pollErr(c.clusterName, "replicasets", "list", err, SeverityWarn).Report()
+			errs = append(errs, pollErr(c.clusterName, "replicasets", "list", err, SeverityWarn))
 		} else {
 			for _, rs := range rss {
 				nsID, ok := namespaceIDsByName[rs.Namespace]
@@ -587,7 +618,6 @@ func (c *Collector) ingestPods(ctx context.Context, namespaceIDsByName map[strin
 	for _, p := range pods {
 		nsID, ok := namespaceIDsByName[p.Namespace]
 		if !ok {
-			slog.Warn("collector: pod in unknown namespace; skipping", "pod", p.Name, "namespace", p.Namespace, "cluster_name", c.clusterName)
 			skipped++
 			continue
 		}
@@ -610,7 +640,7 @@ func (c *Collector) ingestPods(ctx context.Context, namespaceIDsByName map[strin
 			in.WorkloadId = wid
 		}
 		if _, err := c.store.UpsertPod(ctx, in); err != nil {
-			pollErr(c.clusterName, "pods", "upsert", err, SeverityWarn, slog.String("pod", p.Name), slog.String("namespace", p.Namespace)).Report()
+			errs = append(errs, pollErr(c.clusterName, "pods", "upsert", err, SeverityWarn, slog.String("pod", p.Name), slog.String("namespace", p.Namespace)))
 			failed++
 			continue
 		}
@@ -621,12 +651,10 @@ func (c *Collector) ingestPods(ctx context.Context, namespaceIDsByName map[strin
 
 	var reconciled int64
 	if c.reconcile {
-		// Reconcile every live namespace, including ones with zero pods this
-		// tick, so emptied namespaces see their stored pods removed.
 		for _, nsID := range namespaceIDsByName {
 			n, err := c.store.DeletePodsNotIn(ctx, nsID, keepByNS[nsID])
 			if err != nil {
-				pollErr(c.clusterName, "pods", "reconcile", err, SeverityError, slog.String("namespace_id", nsID.String())).Report()
+				errs = append(errs, pollErr(c.clusterName, "pods", "reconcile", err, SeverityError, slog.String("namespace_id", nsID.String())))
 				continue
 			}
 			reconciled += n
@@ -635,25 +663,19 @@ func (c *Collector) ingestPods(ctx context.Context, namespaceIDsByName map[strin
 	}
 	metrics.MarkPoll(c.clusterName, "pods")
 	slog.Info("collector: ingested pods", "upserted", upserted, "failed", failed, "skipped", skipped, "reconciled_deleted", reconciled, "cluster_name", c.clusterName)
+	return errors.Join(errs...)
 }
 
-// ingestWorkloads lists Deployments, StatefulSets, and DaemonSets (folded
-// into a single slice tagged by Kind), resolves each one's K8s namespace
-// name to the CMDB namespace UUID, and upserts it. Reconcile operates
-// per-namespace keyed on the (kind, name) tuple so a deleted Deployment
-// 'web' doesn't wipe the still-live StatefulSet 'web' in the same namespace.
-//
-// Returns a (namespace_id -> (kind, name) -> workload_id) map so ingestPods
-// can resolve each pod's controller into a workload_id FK. Returns nil on
-// ListWorkloads failure — ingestPods treats that as "skip owner resolution,
-// write pods without workload_id, let the next tick backfill".
-func (c *Collector) ingestWorkloads(ctx context.Context, namespaceIDsByName map[string]uuid.UUID) map[uuid.UUID]map[wlKey]uuid.UUID {
+// ingestWorkloads lists Deployments, StatefulSets, and DaemonSets, resolves
+// each one's namespace, and upserts it. Returns the (ns -> (kind,name) -> id)
+// map (nil on list failure) and a joined error of all failures.
+func (c *Collector) ingestWorkloads(ctx context.Context, namespaceIDsByName map[string]uuid.UUID) (map[uuid.UUID]map[wlKey]uuid.UUID, error) {
 	workloads, err := c.source.ListWorkloads(ctx)
 	if err != nil {
-		pollErr(c.clusterName, "workloads", "list", err, SeverityWarn).Report()
-		return nil
+		return nil, pollErr(c.clusterName, "workloads", "list", err, SeverityWarn)
 	}
 
+	var errs []error
 	keepByNS := make(map[uuid.UUID][]wlKey)
 	idsByNS := make(map[uuid.UUID]map[wlKey]uuid.UUID)
 
@@ -661,7 +683,6 @@ func (c *Collector) ingestWorkloads(ctx context.Context, namespaceIDsByName map[
 	for _, w := range workloads {
 		nsID, ok := namespaceIDsByName[w.Namespace]
 		if !ok {
-			slog.Warn("collector: workload in unknown namespace; skipping", "workload", w.Name, "kind", w.Kind, "namespace", w.Namespace, "cluster_name", c.clusterName)
 			skipped++
 			continue
 		}
@@ -682,7 +703,7 @@ func (c *Collector) ingestWorkloads(ctx context.Context, namespaceIDsByName map[
 		}
 		stored, err := c.store.UpsertWorkload(ctx, in)
 		if err != nil {
-			pollErr(c.clusterName, "workloads", "upsert", err, SeverityWarn, slog.String("workload", w.Name), slog.String("kind", string(w.Kind)), slog.String("namespace", w.Namespace)).Report()
+			errs = append(errs, pollErr(c.clusterName, "workloads", "upsert", err, SeverityWarn, slog.String("workload", w.Name), slog.String("kind", string(w.Kind)), slog.String("namespace", w.Namespace)))
 			failed++
 			continue
 		}
@@ -700,8 +721,6 @@ func (c *Collector) ingestWorkloads(ctx context.Context, namespaceIDsByName map[
 
 	var reconciled int64
 	if c.reconcile {
-		// Reconcile every live namespace, including ones with zero workloads
-		// this tick, so emptied namespaces have their stored workloads cleared.
 		for _, nsID := range namespaceIDsByName {
 			keep := keepByNS[nsID]
 			kinds := make([]string, 0, len(keep))
@@ -712,7 +731,7 @@ func (c *Collector) ingestWorkloads(ctx context.Context, namespaceIDsByName map[
 			}
 			n, err := c.store.DeleteWorkloadsNotIn(ctx, nsID, kinds, names)
 			if err != nil {
-				pollErr(c.clusterName, "workloads", "reconcile", err, SeverityError, slog.String("namespace_id", nsID.String())).Report()
+				errs = append(errs, pollErr(c.clusterName, "workloads", "reconcile", err, SeverityError, slog.String("namespace_id", nsID.String())))
 				continue
 			}
 			reconciled += n
@@ -721,26 +740,25 @@ func (c *Collector) ingestWorkloads(ctx context.Context, namespaceIDsByName map[
 	}
 	metrics.MarkPoll(c.clusterName, "workloads")
 	slog.Info("collector: ingested workloads", "upserted", upserted, "failed", failed, "skipped", skipped, "reconciled_deleted", reconciled, "cluster_name", c.clusterName)
-	return idsByNS
+	return idsByNS, errors.Join(errs...)
 }
 
 // ingestServices lists services cluster-wide, resolves each one's K8s
-// namespace name to the CMDB namespace UUID, and upserts it. Per-namespace
-// reconcile mirrors ingestPods.
-func (c *Collector) ingestServices(ctx context.Context, namespaceIDsByName map[string]uuid.UUID) {
+// namespace name to the CMDB namespace UUID, and upserts it. Returns a
+// joined error of all failures.
+func (c *Collector) ingestServices(ctx context.Context, namespaceIDsByName map[string]uuid.UUID) error {
 	services, err := c.source.ListServices(ctx)
 	if err != nil {
-		pollErr(c.clusterName, "services", "list", err, SeverityWarn).Report()
-		return
+		return pollErr(c.clusterName, "services", "list", err, SeverityWarn)
 	}
 
+	var errs []error
 	keepByNS := make(map[uuid.UUID][]string)
 
 	var upserted, failed, skipped int
 	for _, s := range services {
 		nsID, ok := namespaceIDsByName[s.Namespace]
 		if !ok {
-			slog.Warn("collector: service in unknown namespace; skipping", "service", s.Name, "namespace", s.Namespace, "cluster_name", c.clusterName)
 			skipped++
 			continue
 		}
@@ -770,7 +788,7 @@ func (c *Collector) ingestServices(ctx context.Context, namespaceIDsByName map[s
 			in.Labels = &labels
 		}
 		if _, err := c.store.UpsertService(ctx, in); err != nil {
-			pollErr(c.clusterName, "services", "upsert", err, SeverityWarn, slog.String("service", s.Name), slog.String("namespace", s.Namespace)).Report()
+			errs = append(errs, pollErr(c.clusterName, "services", "upsert", err, SeverityWarn, slog.String("service", s.Name), slog.String("namespace", s.Namespace)))
 			failed++
 			continue
 		}
@@ -784,7 +802,7 @@ func (c *Collector) ingestServices(ctx context.Context, namespaceIDsByName map[s
 		for _, nsID := range namespaceIDsByName {
 			n, err := c.store.DeleteServicesNotIn(ctx, nsID, keepByNS[nsID])
 			if err != nil {
-				pollErr(c.clusterName, "services", "reconcile", err, SeverityError, slog.String("namespace_id", nsID.String())).Report()
+				errs = append(errs, pollErr(c.clusterName, "services", "reconcile", err, SeverityError, slog.String("namespace_id", nsID.String())))
 				continue
 			}
 			reconciled += n
@@ -793,25 +811,25 @@ func (c *Collector) ingestServices(ctx context.Context, namespaceIDsByName map[s
 	}
 	metrics.MarkPoll(c.clusterName, "services")
 	slog.Info("collector: ingested services", "upserted", upserted, "failed", failed, "skipped", skipped, "reconciled_deleted", reconciled, "cluster_name", c.clusterName)
+	return errors.Join(errs...)
 }
 
 // ingestIngresses lists ingresses cluster-wide, resolves each one's K8s
-// namespace name to the CMDB namespace UUID, and upserts it. Per-namespace
-// reconcile mirrors ingestServices.
-func (c *Collector) ingestIngresses(ctx context.Context, namespaceIDsByName map[string]uuid.UUID) {
+// namespace name to the CMDB namespace UUID, and upserts it. Returns a
+// joined error of all failures.
+func (c *Collector) ingestIngresses(ctx context.Context, namespaceIDsByName map[string]uuid.UUID) error {
 	ingresses, err := c.source.ListIngresses(ctx)
 	if err != nil {
-		pollErr(c.clusterName, "ingresses", "list", err, SeverityWarn).Report()
-		return
+		return pollErr(c.clusterName, "ingresses", "list", err, SeverityWarn)
 	}
 
+	var errs []error
 	keepByNS := make(map[uuid.UUID][]string)
 
 	var upserted, failed, skipped int
 	for _, ing := range ingresses {
 		nsID, ok := namespaceIDsByName[ing.Namespace]
 		if !ok {
-			slog.Warn("collector: ingress in unknown namespace; skipping", "ingress", ing.Name, "namespace", ing.Namespace, "cluster_name", c.clusterName)
 			skipped++
 			continue
 		}
@@ -837,7 +855,7 @@ func (c *Collector) ingestIngresses(ctx context.Context, namespaceIDsByName map[
 			in.Labels = &labels
 		}
 		if _, err := c.store.UpsertIngress(ctx, in); err != nil {
-			pollErr(c.clusterName, "ingresses", "upsert", err, SeverityWarn, slog.String("ingress", ing.Name), slog.String("namespace", ing.Namespace)).Report()
+			errs = append(errs, pollErr(c.clusterName, "ingresses", "upsert", err, SeverityWarn, slog.String("ingress", ing.Name), slog.String("namespace", ing.Namespace)))
 			failed++
 			continue
 		}
@@ -851,7 +869,7 @@ func (c *Collector) ingestIngresses(ctx context.Context, namespaceIDsByName map[
 		for _, nsID := range namespaceIDsByName {
 			n, err := c.store.DeleteIngressesNotIn(ctx, nsID, keepByNS[nsID])
 			if err != nil {
-				pollErr(c.clusterName, "ingresses", "reconcile", err, SeverityError, slog.String("namespace_id", nsID.String())).Report()
+				errs = append(errs, pollErr(c.clusterName, "ingresses", "reconcile", err, SeverityError, slog.String("namespace_id", nsID.String())))
 				continue
 			}
 			reconciled += n
@@ -860,6 +878,7 @@ func (c *Collector) ingestIngresses(ctx context.Context, namespaceIDsByName map[
 	}
 	metrics.MarkPoll(c.clusterName, "ingresses")
 	slog.Info("collector: ingested ingresses", "upserted", upserted, "failed", failed, "skipped", skipped, "reconciled_deleted", reconciled, "cluster_name", c.clusterName)
+	return errors.Join(errs...)
 }
 
 func ptrIfNonEmpty(s string) *string {
@@ -877,16 +896,14 @@ func ptrIfNonEmptySlice(s []string) *[]string {
 }
 
 // ingestPersistentVolumes lists cluster-scoped PVs and upserts each one.
-// Returns a (pv-name -> pv-id) map the PVC ingestion pass uses to resolve
-// each PVC's bound_volume_id FK, or nil on list failure (signal to skip
-// FK resolution). Reconcile is cluster-scoped since PVs aren't namespaced.
-func (c *Collector) ingestPersistentVolumes(ctx context.Context, clusterID uuid.UUID) map[string]uuid.UUID {
+// Returns a (pv-name -> pv-id) map (nil on list failure) and a joined error.
+func (c *Collector) ingestPersistentVolumes(ctx context.Context, clusterID uuid.UUID) (map[string]uuid.UUID, error) {
 	pvs, err := c.source.ListPersistentVolumes(ctx)
 	if err != nil {
-		pollErr(c.clusterName, "persistentvolumes", "list", err, SeverityWarn).Report()
-		return nil
+		return nil, pollErr(c.clusterName, "persistentvolumes", "list", err, SeverityWarn)
 	}
 
+	var errs []error
 	var upserted, failed int
 	keepNames := make([]string, 0, len(pvs))
 	idsByName := make(map[string]uuid.UUID, len(pvs))
@@ -910,7 +927,7 @@ func (c *Collector) ingestPersistentVolumes(ctx context.Context, clusterID uuid.
 		}
 		stored, err := c.store.UpsertPersistentVolume(ctx, in)
 		if err != nil {
-			pollErr(c.clusterName, "persistentvolumes", "upsert", err, SeverityWarn, slog.String("pv", pv.Name)).Report()
+			errs = append(errs, pollErr(c.clusterName, "persistentvolumes", "upsert", err, SeverityWarn, slog.String("pv", pv.Name)))
 			failed++
 			continue
 		}
@@ -926,36 +943,31 @@ func (c *Collector) ingestPersistentVolumes(ctx context.Context, clusterID uuid.
 	if c.reconcile {
 		n, err := c.store.DeletePersistentVolumesNotIn(ctx, clusterID, keepNames)
 		if err != nil {
-			pollErr(c.clusterName, "persistentvolumes", "reconcile", err, SeverityError).Report()
+			errs = append(errs, pollErr(c.clusterName, "persistentvolumes", "reconcile", err, SeverityError))
 		}
 		reconciled = n
 		metrics.ObserveReconciled(c.clusterName, "persistentvolumes", n)
 	}
 	metrics.MarkPoll(c.clusterName, "persistentvolumes")
 	slog.Info("collector: ingested persistent volumes", "upserted", upserted, "failed", failed, "reconciled_deleted", reconciled, "cluster_name", c.clusterName)
-	return idsByName
+	return idsByName, errors.Join(errs...)
 }
 
 // ingestPersistentVolumeClaims lists PVCs cluster-wide, resolves each one's
-// K8s namespace name to the CMDB namespace UUID, and upserts it. When the
-// PVC's spec.volumeName matches a PV upserted this tick, the FK is set;
-// otherwise bound_volume_id stays null (pending, or PV not yet ingested).
-//
-// pvIDsByName may be nil (PV listing failed) — PVCs are still upserted,
-// just without bound_volume_id set.
-func (c *Collector) ingestPersistentVolumeClaims(ctx context.Context, namespaceIDsByName map[string]uuid.UUID, pvIDsByName map[string]uuid.UUID) {
+// namespace, and upserts it. pvIDsByName may be nil (PV listing failed) —
+// PVCs are still upserted without bound_volume_id. Returns a joined error.
+func (c *Collector) ingestPersistentVolumeClaims(ctx context.Context, namespaceIDsByName map[string]uuid.UUID, pvIDsByName map[string]uuid.UUID) error {
 	pvcs, err := c.source.ListPersistentVolumeClaims(ctx)
 	if err != nil {
-		pollErr(c.clusterName, "persistentvolumeclaims", "list", err, SeverityWarn).Report()
-		return
+		return pollErr(c.clusterName, "persistentvolumeclaims", "list", err, SeverityWarn)
 	}
 
+	var errs []error
 	var upserted, failed, skipped int
 	keepByNS := make(map[uuid.UUID][]string)
 	for _, pvc := range pvcs {
 		nsID, ok := namespaceIDsByName[pvc.Namespace]
 		if !ok {
-			slog.Warn("collector: pvc in unknown namespace; skipping", "pvc", pvc.Name, "namespace", pvc.Namespace, "cluster_name", c.clusterName)
 			skipped++
 			continue
 		}
@@ -978,7 +990,7 @@ func (c *Collector) ingestPersistentVolumeClaims(ctx context.Context, namespaceI
 			}
 		}
 		if _, err := c.store.UpsertPersistentVolumeClaim(ctx, in); err != nil {
-			pollErr(c.clusterName, "persistentvolumeclaims", "upsert", err, SeverityWarn, slog.String("pvc", pvc.Name), slog.String("namespace", pvc.Namespace)).Report()
+			errs = append(errs, pollErr(c.clusterName, "persistentvolumeclaims", "upsert", err, SeverityWarn, slog.String("pvc", pvc.Name), slog.String("namespace", pvc.Namespace)))
 			failed++
 			continue
 		}
@@ -992,7 +1004,7 @@ func (c *Collector) ingestPersistentVolumeClaims(ctx context.Context, namespaceI
 		for _, nsID := range namespaceIDsByName {
 			n, err := c.store.DeletePersistentVolumeClaimsNotIn(ctx, nsID, keepByNS[nsID])
 			if err != nil {
-				pollErr(c.clusterName, "persistentvolumeclaims", "reconcile", err, SeverityError, slog.String("namespace_id", nsID.String())).Report()
+				errs = append(errs, pollErr(c.clusterName, "persistentvolumeclaims", "reconcile", err, SeverityError, slog.String("namespace_id", nsID.String())))
 				continue
 			}
 			reconciled += n
@@ -1001,5 +1013,6 @@ func (c *Collector) ingestPersistentVolumeClaims(ctx context.Context, namespaceI
 	}
 	metrics.MarkPoll(c.clusterName, "persistentvolumeclaims")
 	slog.Info("collector: ingested pvcs", "upserted", upserted, "failed", failed, "skipped", skipped, "reconciled_deleted", reconciled, "cluster_name", c.clusterName)
+	return errors.Join(errs...)
 }
 
