@@ -6,6 +6,83 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 — the REST and database contracts may still change incompatibly before
 `v1.0.0`.
 
+## [0.1.1] — 2026-04-20
+
+Patch release on top of `v0.1.0` "Canopus". Adds the first two steps of
+the ADR-0008 asset-management rollout (curated metadata on Namespace
+and Node, including `hardware_model`) and fixes three UUID-instead-of-
+name rendering bugs on detail pages. Schema is additive only; `v0.1.0`
+→ `v0.1.1` is a straight `ARGOS_AUTO_MIGRATE=true` bump, no data
+migration required.
+
+### Added
+
+- **Curated metadata on Namespace**
+  ([#56](https://github.com/sthalbert/Argos/pull/56)) — `owner` /
+  `criticality` / `notes` / `runbook_url` / `annotations` (JSONB)
+  columns editable at `/ui/namespaces/:id` by editor / admin. The
+  collector's `UpsertNamespace` leaves these columns alone on conflict
+  so per-tick upserts can't clobber operator edits.
+- **Curated metadata on Node + `hardware_model`**
+  ([#57](https://github.com/sthalbert/Argos/pull/57)) — same five
+  curated columns on nodes plus a free-form `hardware_model` field for
+  bare-metal installs to record a server model alongside the cloud-shaped
+  `instance_type` populated by the collector. Closes the SNC §8.1.a
+  "model" requirement for on-prem deployments. Editable at
+  `/ui/nodes/:id`. `UpsertNode`'s `DO UPDATE SET` clause is explicit
+  about which columns the collector owns; the new columns are absent
+  from it by design.
+- **ADR-0008** ([#55](https://github.com/sthalbert/Argos/pull/55)) —
+  SecNumCloud v3.2 chapter 8 coverage. Maps every §8.1 sub-clause to a
+  concrete Argos column or explicit cross-reference (licenses →
+  Dependency-Track via `containers[].image`; §8.2 and §8.5 are
+  procedural / out of system scope). DICT
+  (disponibilité / intégrité / confidentialité / traçabilité) classification
+  will land on Namespace + Workload in a later release at the Application
+  abstraction, per the Mercator model.
+
+### Fixed
+
+- **Detail pages resolve parent names instead of UUIDs**
+  ([#58](https://github.com/sthalbert/Argos/pull/58)) —
+  `/ui/namespaces/:id` previously had no Cluster row at all;
+  `/ui/nodes/:id` showed the cluster id as a truncated UUID;
+  `/ui/workloads/:id` did the same for namespace. Each page now
+  resolves the parent and renders a `<Link>` with its name. The
+  Workload breadcrumb also gains cluster + namespace hops so the
+  drill-down trail reads *"Workloads / <cluster> / <namespace> / this
+  workload"* instead of dead-ending.
+- **Namespace pods table shows workload name**
+  ([#59](https://github.com/sthalbert/Argos/pull/59)) — the Workload
+  column in `/ui/namespaces/:id`'s pods table rendered each pod's
+  `workload_id` as a UUID link. Now renders the workload's name and
+  kind (`web-frontend · Deployment`) by resolving against the
+  in-scope workloads fetch — no extra network call.
+
+### Schema migrations
+
+- `00019_namespace_curated_metadata.sql` — adds 5 columns on
+  `namespaces`.
+- `00020_node_curated_metadata.sql` — adds 6 columns (5 curated +
+  `hardware_model`) on `nodes`.
+
+Both are additive; existing rows get NULL for the new columns and the
+JSONB defaults to `{}`. No data rewrite, no downtime.
+
+### Upgrading
+
+```bash
+# From v0.1.0. Keep your existing ARGOS_BOOTSTRAP_ADMIN_PASSWORD — the
+# bootstrap only fires when no admin exists, so it's a no-op here.
+make build VERSION=0.1.1
+# Point at the same DSN as v0.1.0; ARGOS_AUTO_MIGRATE=true (default)
+# applies 00019 + 00020 on startup.
+./bin/argosd
+```
+
+No client-side break: new columns show up as `null` on existing rows
+and the UI renders an "Edit" placeholder until an editor fills them in.
+
 ## [0.1.0] — 2026-04-19 — "Canopus"
 
 First tagged release. Argos is a Kubernetes-aware CMDB aligned with the
@@ -167,4 +244,5 @@ of the old *Argo Navis* constellation — a classical navigation marker.
   should federate through their OIDC provider (which already gives
   every argosd instance MFA as a side-effect).
 
+[0.1.1]: https://github.com/sthalbert/Argos/releases/tag/v0.1.1
 [0.1.0]: https://github.com/sthalbert/Argos/releases/tag/v0.1.0
