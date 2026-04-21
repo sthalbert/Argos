@@ -1974,10 +1974,10 @@ func TestNodeCRUD(t *testing.T) {
 		t.Errorf("node.ClusterId=%v, want %v", node.ClusterId, *cluster.Id)
 	}
 
-	// Duplicate (cluster_id, name) → 409
+	// Duplicate (cluster_id, name) → 201 (upsert semantics for push collector)
 	dup := do(h, http.MethodPost, "/v1/nodes", createBody)
-	if dup.Code != http.StatusConflict {
-		t.Errorf("duplicate node status=%d", dup.Code)
+	if dup.Code != http.StatusCreated {
+		t.Errorf("upsert node: want 201, got %d", dup.Code)
 	}
 
 	// Create with unknown cluster_id → 404
@@ -2088,8 +2088,8 @@ func TestNamespaceCRUD(t *testing.T) {
 	}
 
 	dup := do(h, http.MethodPost, "/v1/namespaces", createBody)
-	if dup.Code != http.StatusConflict {
-		t.Errorf("duplicate namespace status=%d", dup.Code)
+	if dup.Code != http.StatusCreated {
+		t.Errorf("upsert namespace: want 201, got %d", dup.Code)
 	}
 
 	missing := do(h, http.MethodPost, "/v1/namespaces", fmt.Sprintf(`{"cluster_id":%q,"name":"x"}`, uuid.New().String()))
@@ -2199,8 +2199,8 @@ func TestPodCRUD(t *testing.T) {
 	}
 
 	dup := do(h, http.MethodPost, "/v1/pods", createBody)
-	if dup.Code != http.StatusConflict {
-		t.Errorf("duplicate pod status=%d", dup.Code)
+	if dup.Code != http.StatusCreated {
+		t.Errorf("upsert pod: want 201, got %d", dup.Code)
 	}
 
 	missing := do(h, http.MethodPost, "/v1/pods", fmt.Sprintf(`{"namespace_id":%q,"name":"x"}`, uuid.New().String()))
@@ -2308,10 +2308,10 @@ func TestWorkloadCRUD(t *testing.T) {
 		t.Errorf("sts with same name in same ns should be allowed: %d %q", sfs.Code, sfs.Body.String())
 	}
 
-	// Duplicate (ns, kind, name) is 409.
+	// Duplicate (ns, kind, name) → 201 (upsert).
 	dup := do(h, http.MethodPost, "/v1/workloads", createBody)
-	if dup.Code != http.StatusConflict {
-		t.Errorf("duplicate: %d", dup.Code)
+	if dup.Code != http.StatusCreated {
+		t.Errorf("upsert workload: want 201, got %d", dup.Code)
 	}
 
 	// Invalid kind rejected.
@@ -2404,8 +2404,8 @@ func TestIngressCRUD(t *testing.T) {
 	}
 
 	dup := do(h, http.MethodPost, "/v1/ingresses", createBody)
-	if dup.Code != http.StatusConflict {
-		t.Errorf("duplicate: %d", dup.Code)
+	if dup.Code != http.StatusCreated {
+		t.Errorf("upsert ingress: want 201, got %d", dup.Code)
 	}
 
 	missing := do(h, http.MethodPost, "/v1/ingresses", fmt.Sprintf(`{"namespace_id":%q,"name":"x"}`, uuid.New().String()))
@@ -2478,8 +2478,8 @@ func TestServiceCRUD(t *testing.T) {
 	}
 
 	dup := do(h, http.MethodPost, "/v1/services", createBody)
-	if dup.Code != http.StatusConflict {
-		t.Errorf("duplicate: %d", dup.Code)
+	if dup.Code != http.StatusCreated {
+		t.Errorf("upsert service: want 201, got %d", dup.Code)
 	}
 
 	url := "/v1/services/" + svc.Id.String()
