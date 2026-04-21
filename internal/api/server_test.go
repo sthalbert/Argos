@@ -1802,7 +1802,19 @@ func (m *memStore) DeletePersistentVolumeClaimsNotIn(_ context.Context, namespac
 
 func newTestHandler(t *testing.T, store Store) http.Handler {
 	t.Helper()
-	return Handler(NewServer("test", store, auth.SecureNever, nil))
+	strict := NewStrictHandlerWithOptions(
+		NewServer("test", store, auth.SecureNever, nil),
+		[]StrictMiddlewareFunc{InjectRequestMiddleware},
+		StrictHTTPServerOptions{
+			RequestErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+			},
+			ResponseErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			},
+		},
+	)
+	return Handler(strict)
 }
 
 func TestHealthAndReadiness(t *testing.T) {
@@ -2563,7 +2575,7 @@ func TestCreateClusterValidation(t *testing.T) {
 	}{
 		{"empty body", "", http.StatusBadRequest},
 		{"missing name", `{"environment":"dev"}`, http.StatusBadRequest},
-		{"unknown field", `{"name":"x","bogus":true}`, http.StatusBadRequest},
+		{"unknown field ignored", `{"name":"x","bogus":true}`, http.StatusCreated},
 		{"malformed json", `{`, http.StatusBadRequest},
 	}
 	for _, tt := range tests {
