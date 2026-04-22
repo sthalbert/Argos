@@ -1,6 +1,6 @@
 # Deploy Argos with Helm
 
-This guide deploys argosd on Kubernetes using the Helm chart in `charts/argos/`. The chart bundles an optional PostgreSQL instance (Bitnami subchart) so you can get a fully working Argos with a single `helm install`.
+This guide deploys argosd on Kubernetes using the Helm chart in `charts/argos/`. The chart bundles an optional PostgreSQL instance (official `postgres:17-alpine` image) so you can get a fully working Argos with a single `helm install` -- no external operator or dependency required.
 
 > **Prefer Kustomize?** See [Deploy on Kubernetes](kubernetes.md) for the plain-manifest approach.
 
@@ -9,38 +9,19 @@ This guide deploys argosd on Kubernetes using the Helm chart in `charts/argos/`.
 - A Kubernetes cluster (kind, minikube, OrbStack, or a production cluster).
 - [Helm 3](https://helm.sh/docs/intro/install/) installed locally.
 - `kubectl` configured to talk to the cluster.
-- A container image reachable from the cluster. See [Build the image](#build-the-image) below.
 
-## Build the image
-
-The image is not yet published to a public registry. Build it locally and load it into your cluster:
-
-```bash
-make docker-build    # tags argos:dev
-
-# Load into local clusters:
-kind load docker-image argos:dev --name <cluster>
-# or: minikube image load argos:dev
-# or: docker push <your-registry>/argos:dev
-```
+Pre-built images are published to `ghcr.io/sthalbert/argos` on every release. To build your own, see [Build the image](#build-the-image) below.
 
 ## Install with bundled PostgreSQL
 
-The simplest path -- the chart deploys PostgreSQL alongside argosd:
+The simplest path -- one command deploys argosd and PostgreSQL together:
 
 ```bash
-# Pull the Bitnami PostgreSQL dependency.
-helm dependency update charts/argos
-
-# Install into a new namespace.
 helm install argos charts/argos \
-  -n argos-system --create-namespace \
-  --set image.repository=argos \
-  --set image.tag=dev \
-  --set image.pullPolicy=Never
+  -n argos-system --create-namespace
 ```
 
-argosd starts, runs migrations, and bootstraps an admin user. Retrieve the password from the logs:
+argosd starts, runs database migrations automatically, and bootstraps an admin user. Retrieve the password from the logs:
 
 ```bash
 kubectl -n argos-system logs -l app.kubernetes.io/name=argos | grep "ARGOS FIRST-RUN"
@@ -143,6 +124,25 @@ helm install argos charts/argos \
 
 See [Monitoring](../monitoring.md) for the full metrics reference and alert examples.
 
+## Build the image
+
+Pre-built images are published to GHCR on every release. For local development or custom builds:
+
+```bash
+make docker-build    # tags argos:dev
+
+# Load into local clusters:
+kind load docker-image argos:dev --name <cluster>
+# or: minikube image load argos:dev
+
+# Use the local image:
+helm install argos charts/argos \
+  -n argos-system --create-namespace \
+  --set image.repository=argos \
+  --set image.tag=dev \
+  --set image.pullPolicy=Never
+```
+
 ## Values reference
 
 The table below lists the most common values. See [`charts/argos/values.yaml`](../../charts/argos/values.yaml) for the complete file with inline comments.
@@ -194,11 +194,15 @@ The table below lists the most common values. See [`charts/argos/values.yaml`](.
 
 | Value | Default | Description |
 |-------|---------|-------------|
-| `postgresql.enabled` | `true` | Deploy bundled PostgreSQL. |
+| `postgresql.enabled` | `true` | Deploy bundled PostgreSQL (`postgres:17-alpine`). |
+| `postgresql.image.repository` | `postgres` | PostgreSQL image. |
+| `postgresql.image.tag` | `"17-alpine"` | PostgreSQL image tag. |
 | `postgresql.auth.username` | `argos` | PG username. |
 | `postgresql.auth.password` | `argos` | PG password. |
 | `postgresql.auth.database` | `argos` | PG database name. |
-| `postgresql.primary.persistence.size` | `5Gi` | PVC size. |
+| `postgresql.persistence.size` | `5Gi` | PVC size. |
+| `postgresql.persistence.storageClass` | `""` | Storage class (empty = cluster default). |
+| `postgresql.resources` | 100m-500m CPU, 128-512Mi | PG resource requests/limits. |
 | `externalDatabase.url` | `""` | External PG DSN (when bundled PG disabled). |
 | `existingSecret` | `""` | Use an existing Secret for credentials. |
 

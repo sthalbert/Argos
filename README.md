@@ -26,7 +26,6 @@ Replaces the Kubernetes-scoped portion of [Mercator](https://github.com/dbsystel
 ### With Helm (recommended for Kubernetes)
 
 ```bash
-helm dependency update charts/argos
 helm install argos charts/argos -n argos-system --create-namespace
 kubectl -n argos-system logs -l app.kubernetes.io/name=argos | grep "ARGOS FIRST-RUN"
 ```
