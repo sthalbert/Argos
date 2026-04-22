@@ -1,0 +1,27 @@
+apiVersion: v2
+name: argos
+description: >-
+  A CMDB for Kubernetes environments aligned with the ANSSI SecNumCloud
+  qualification framework. Polls clusters and exposes a REST API and web UI.
+type: application
+version: 0.1.0
+appVersion: "0.2.1"
+home: https://github.com/sthalbert/Argos
+sources:
+  - https://github.com/sthalbert/Argos
+maintainers:
+  - name: Steve Albert
+    url: https://github.com/sthalbert
+keywords:
+  - cmdb
+  - kubernetes
+  - secnumcloud
+  - anssi
+  - inventory
+  - compliance
+
+dependencies:
+  - name: postgresql
+    version: "~16"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
