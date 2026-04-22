@@ -68,29 +68,19 @@ Image reference.
 {{- end }}
 
 {{/*
-CNPG cluster name.
+Database URL. When bundled PostgreSQL is enabled, build the DSN from
+the chart values. Otherwise require externalDatabase.url.
 */}}
-{{- define "argos.cnpgClusterName" -}}
-{{ include "argos.fullname" . }}-pg
+{{- define "argos.databaseUrl" -}}
+{{- if .Values.postgresql.enabled -}}
+postgres://{{ .Values.postgresql.auth.username }}:{{ .Values.postgresql.auth.password }}@{{ include "argos.fullname" . }}-postgresql:5432/{{ .Values.postgresql.auth.database }}?sslmode=disable
+{{- else -}}
+{{ required "externalDatabase.url is required when postgresql.enabled=false" .Values.externalDatabase.url }}
+{{- end -}}
 {{- end }}
 
 {{/*
-CNPG app secret name (auto-created by CNPG operator: <cluster>-app).
-Contains "uri", "username", "password", "dbname", "host", "port".
-*/}}
-{{- define "argos.cnpgSecretName" -}}
-{{ include "argos.cnpgClusterName" . }}-app
-{{- end }}
-
-{{/*
-Database URL for external database mode.
-*/}}
-{{- define "argos.externalDatabaseUrl" -}}
-{{ required "externalDatabase.url is required when cnpg.enabled=false" .Values.externalDatabase.url }}
-{{- end }}
-
-{{/*
-Secret name for argosd credentials (non-database secrets: bootstrap password, OIDC).
+Secret name for argosd credentials.
 */}}
 {{- define "argos.secretName" -}}
 {{- if .Values.existingSecret }}

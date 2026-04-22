@@ -60,24 +60,35 @@ oidc:
   # -- Login button label.
   label: "OIDC"
 
-# -- CloudNativePG PostgreSQL cluster.
-# Requires the CNPG operator to be installed in the cluster.
-# Set enabled=false and provide externalDatabase.url to use your own PG.
-cnpg:
-  # -- Deploy a CNPG Cluster resource.
+# -- Bundled PostgreSQL (official postgres:17-alpine image).
+# Set enabled=false and provide externalDatabase.url to use your own PG
+# (managed service, CNPG, or any PostgreSQL 14+ instance).
+postgresql:
+  # -- Deploy a PostgreSQL StatefulSet alongside argosd.
   enabled: true
-  # -- Number of PostgreSQL instances (1 = standalone, 2+ = HA with streaming replication).
-  instances: 1
-  # -- PostgreSQL major version.
-  imageName: "ghcr.io/cloudnative-pg/postgresql:17"
-  # -- Database name.
-  database: argos
-  # -- Database owner.
-  owner: argos
-  # -- PVC size per instance.
-  storageSize: 5Gi
-  # -- Storage class (empty = cluster default).
-  storageClass: ""
+  image:
+    repository: postgres
+    tag: "17-alpine"
+    pullPolicy: IfNotPresent
+  auth:
+    # -- Database superuser username.
+    username: argos
+    # -- Database superuser password.
+    password: argos
+    # -- Database name (created on first boot via POSTGRES_DB).
+    database: argos
+  persistence:
+    # -- PVC size.
+    size: 5Gi
+    # -- Storage class (empty = cluster default).
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
 
 # -- External PostgreSQL. Only used when cnpg.enabled=false.
 externalDatabase:

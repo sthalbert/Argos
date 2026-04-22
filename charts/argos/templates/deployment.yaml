@@ -70,21 +70,6 @@ spec:
               value: {{ .Values.collector.kubeconfig | quote }}
             {{- end }}
             {{- end }}
-            {{- if .Values.cnpg.enabled }}
-            # Database URL from the CNPG-generated app secret.
-            - name: ARGOS_DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "argos.cnpgSecretName" . }}
-                  key: uri
-            {{- else }}
-            # Database URL from chart secret or external database.
-            - name: ARGOS_DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "argos.secretName" . }}
-                  key: ARGOS_DATABASE_URL
-            {{- end }}
           envFrom:
             - secretRef:
                 name: {{ include "argos.secretName" . }}
