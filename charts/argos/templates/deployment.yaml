@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "argos.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "argos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: daemon
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "argos.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: daemon
+  template:
+    metadata:
+      labels:
+        {{- include "argos.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: daemon
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- if .Values.metrics.enabled }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "argos.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: argosd
+          image: {{ include "argos.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: ARGOS_ADDR
+              value: {{ .Values.argosd.addr | quote }}
+            - name: ARGOS_AUTO_MIGRATE
+              value: {{ .Values.argosd.autoMigrate | quote }}
+            - name: ARGOS_SHUTDOWN_TIMEOUT
+              value: {{ .Values.argosd.shutdownTimeout | quote }}
+            - name: ARGOS_SESSION_SECURE_COOKIE
+              value: {{ .Values.argosd.sessionSecureCookie | quote }}
+            {{- if .Values.collector.enabled }}
+            - name: ARGOS_COLLECTOR_ENABLED
+              value: "true"
+            - name: ARGOS_COLLECTOR_RECONCILE
+              value: {{ .Values.collector.reconcile | quote }}
+            - name: ARGOS_COLLECTOR_INTERVAL
+              value: {{ .Values.collector.interval | quote }}
+            - name: ARGOS_COLLECTOR_FETCH_TIMEOUT
+              value: {{ .Values.collector.fetchTimeout | quote }}
+            {{- if .Values.collector.clusters }}
+            - name: ARGOS_COLLECTOR_CLUSTERS
+              value: {{ .Values.collector.clusters | toJson | quote }}
+            {{- else }}
+            - name: ARGOS_CLUSTER_NAME
+              value: {{ .Values.collector.clusterName | quote }}
+            - name: ARGOS_KUBECONFIG
+              value: {{ .Values.collector.kubeconfig | quote }}
+            {{- end }}
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ include "argos.secretName" . }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
