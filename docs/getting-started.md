@@ -110,14 +110,12 @@ The `/ui/` path returns 404 in this mode; the REST API works normally.
 If you have a Kubernetes cluster and Helm 3 installed, this is the fastest path to a production-like setup:
 
 ```bash
-# Pull the PostgreSQL dependency and install.
-helm dependency update charts/argos
 helm install argos charts/argos \
   -n argos-system --create-namespace \
   --set argosd.bootstrapAdminPassword="changeme-on-first-login"
 ```
 
-The chart deploys argosd and a PostgreSQL instance. Retrieve the admin password from the logs if you did not set one:
+The chart deploys argosd and a PostgreSQL instance (`postgres:17-alpine`). Retrieve the admin password from the logs if you did not set one:
 
 ```bash
 kubectl -n argos-system logs -l app.kubernetes.io/name=argos | grep "ARGOS FIRST-RUN"
