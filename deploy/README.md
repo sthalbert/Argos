@@ -236,7 +236,7 @@ To catalogue multiple clusters from a single argosd (per ADR-0005):
            readOnly: true
    ```
 
-3. Replace `ARGOS_CLUSTER_NAME` / `ARGOS_KUBECONFIG` in `deployment.yaml` with `ARGOS_COLLECTOR_CLUSTERS` pointing at each mounted path:
+3. Replace `ARGOS_CLUSTER_NAME` in `deployment.yaml` with `ARGOS_COLLECTOR_CLUSTERS` pointing at each mounted path:
 
    ```yaml
    env:

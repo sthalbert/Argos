@@ -171,9 +171,9 @@ The table below lists the most common values. See [`charts/argos/values.yaml`](.
 | Value | Default | Description |
 |-------|---------|-------------|
 | `collector.enabled` | `false` | Enable the pull-mode collector. |
-| `collector.clusterName` | `"in-cluster"` | Single-cluster name. |
-| `collector.kubeconfig` | `""` | Kubeconfig path (empty = in-cluster). |
-| `collector.clusters` | `[]` | Multi-cluster list (overrides clusterName). |
+| `collector.clusterName` | `"in-cluster"` | Single-cluster name (ignored when `clusters` is non-empty). |
+| `collector.clusters` | `[]` | Multi-cluster list. Each entry: `{name, kubeconfig}`. |
+| `collector.kubeconfigSecret` | `""` | Name of an existing Secret containing kubeconfig files. Mounted read-only at `/etc/argos/kubeconfigs/`. See [How to securely provide kubeconfigs](../how-to-secure-kubeconfig.md). |
 | `collector.interval` | `"5m"` | Poll interval. |
 | `collector.fetchTimeout` | `"10s"` | Per-poll K8s API timeout. |
 | `collector.reconcile` | `true` | Delete stale rows. |

@@ -148,7 +148,7 @@ containers:
 
 ### 3. Switch to ARGOS_COLLECTOR_CLUSTERS
 
-Replace `ARGOS_CLUSTER_NAME` / `ARGOS_KUBECONFIG` in the Deployment env with:
+Replace `ARGOS_CLUSTER_NAME` in the Deployment env with:
 
 ```yaml
 env:
