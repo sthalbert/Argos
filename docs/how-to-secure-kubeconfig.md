@@ -2,7 +2,15 @@
 
 This guide shows how to supply Kubernetes credentials to the Argos collector without exposing them in environment variables, pod specs, or version control.
 
-## Why this matters
+## Why Argos needs kubeconfigs
+
+Argos is a multi-cluster CMDB: its collector polls the Kubernetes API of every catalogued cluster to build a live inventory of nodes, namespaces, pods, workloads, services, ingresses, and persistent volumes (per ADR-0005).
+
+When Argos runs **inside** a cluster, it can catalogue that cluster using its own ServiceAccount — no kubeconfig needed. But to catalogue **remote** clusters, the collector needs a kubeconfig for each one. That kubeconfig authenticates a read-only ServiceAccount on the target cluster so the collector can `list` resources.
+
+In a typical SecNumCloud deployment, a single Argos instance catalogues several clusters across zones and environments. Each remote cluster requires its own kubeconfig, making secure credential handling critical.
+
+## Why the credentials must be mounted, not injected
 
 Kubernetes stores environment variables in the Pod spec in plaintext. Anyone with `kubectl get pod -o yaml` access can read them. If a kubeconfig path or — worse — its content ends up in an env var, it is visible to every user with pod-read RBAC in the namespace.
 
