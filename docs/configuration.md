@@ -55,14 +55,13 @@ The embedded pull-mode collector is disabled by default.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `ARGOS_CLUSTER_NAME` | when single-cluster | -- | Name of the cluster to poll. Must match a cluster registered via `POST /v1/clusters`. |
-| `ARGOS_KUBECONFIG` | no | (in-cluster) | Path to a kubeconfig file. Empty string or unset falls back to the in-cluster ServiceAccount. |
+| `ARGOS_CLUSTER_NAME` | when single-cluster | -- | Name of the cluster to poll. Must match a cluster registered via `POST /v1/clusters`. When using in-cluster ServiceAccount credentials, no kubeconfig is needed. |
 
 #### Multi-cluster mode
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `ARGOS_COLLECTOR_CLUSTERS` | no | -- | JSON array of `{"name":"...","kubeconfig":"..."}` tuples. One collector goroutine spawns per entry. An empty `kubeconfig` falls back to in-cluster config. Overrides `ARGOS_CLUSTER_NAME` / `ARGOS_KUBECONFIG` when set. |
+| `ARGOS_COLLECTOR_CLUSTERS` | no | -- | JSON array of `{"name":"...","kubeconfig":"..."}` tuples. One collector goroutine spawns per entry. An empty `kubeconfig` falls back to in-cluster config. Overrides `ARGOS_CLUSTER_NAME` when set. Each `kubeconfig` value is a path to a file mounted from a Kubernetes Secret — see [How to securely provide kubeconfigs](how-to-secure-kubeconfig.md). |
 
 Example:
 
@@ -74,12 +73,15 @@ Example:
 ]
 ```
 
+> **Security:** kubeconfig files must be mounted from a Kubernetes Secret, never passed as environment variable values. See [How to securely provide kubeconfigs](how-to-secure-kubeconfig.md) for the full procedure.
+
 ### Legacy (removed)
 
 | Variable | Status | Migration |
 |----------|--------|-----------|
 | `ARGOS_API_TOKEN` | **removed** | argosd refuses to start if set. Migrate to admin-panel-issued tokens per ADR-0007. |
 | `ARGOS_API_TOKENS` | **removed** | Same as above. |
+| `ARGOS_KUBECONFIG` | **removed** | Use `ARGOS_COLLECTOR_CLUSTERS` with kubeconfig files mounted via `kubeconfigSecret`. See [How to securely provide kubeconfigs](how-to-secure-kubeconfig.md). |
 
 ---
 
@@ -99,7 +101,6 @@ The standalone push-mode collector binary. It runs inside an air-gapped or netwo
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `ARGOS_CLUSTER_NAME` | yes | -- | Name of this cluster. Must match a cluster pre-registered in argosd via `POST /v1/clusters`. |
-| `ARGOS_KUBECONFIG` | no | (in-cluster) | Path to a kubeconfig file. Empty or unset falls back to the in-cluster ServiceAccount. |
 
 ### Collector behavior
 

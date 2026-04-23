@@ -161,10 +161,11 @@ Add these environment variables when starting argosd:
 ```bash
 ARGOS_COLLECTOR_ENABLED=true \
 ARGOS_CLUSTER_NAME=my-cluster \
-ARGOS_KUBECONFIG=~/.kube/config \
 ARGOS_DATABASE_URL="postgres://..." \
   ./bin/argosd
 ```
+
+This uses the in-cluster ServiceAccount by default. For remote clusters, mount kubeconfig files from a Kubernetes Secret and use `ARGOS_COLLECTOR_CLUSTERS` — see [How to securely provide kubeconfigs](how-to-secure-kubeconfig.md).
 
 On the next tick (default: 60 seconds) the collector populates nodes, namespaces, pods, workloads, services, ingresses, persistent volumes, and PVCs.
 

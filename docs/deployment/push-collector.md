@@ -99,7 +99,6 @@ Key variables for the push collector:
 | `ARGOS_SERVER_URL` | yes | argosd base URL. |
 | `ARGOS_API_TOKEN` | yes | PAT with `write` scope. |
 | `ARGOS_CLUSTER_NAME` | yes | Must match a pre-registered cluster. |
-| `ARGOS_KUBECONFIG` | no | Empty = in-cluster ServiceAccount. |
 | `ARGOS_COLLECTOR_INTERVAL` | no | Polling interval (default `5m`). |
 | `ARGOS_COLLECTOR_RECONCILE` | no | Delete stale rows (default `true`). |
 
