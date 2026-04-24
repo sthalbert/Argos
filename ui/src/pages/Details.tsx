@@ -486,15 +486,13 @@ export function NamespaceDetail() {
 export function WorkloadDetail() {
   const { id = '' } = useParams();
   const workloadState = useResource(() => api.getWorkload(id), [id]);
-  // Fetch pods scoped to the workload's namespace (not cluster-wide)
-  // to avoid the limit=200 pagination cutoff on large clusters. The
-  // client-side filter on workload_id still applies since the namespace
-  // may contain pods from other workloads.
-  const workloadData = workloadState.status === 'ready' ? workloadState.data : null;
+  // Fetch pods server-side filtered by workload_id so the result set
+  // is bounded to this workload's pods regardless of cluster size.
   const podsState = useResource(
-    async () => (workloadData ? api.listPods({ namespace_id: workloadData.namespace_id }) : null),
-    [workloadData?.namespace_id ?? ''],
+    () => api.listPods({ workload_id: id }),
+    [id],
   );
+  const workloadData = workloadState.status === 'ready' ? workloadState.data : null;
   const namespaceResult = useResource(
     async () => (workloadData ? api.getNamespace(workloadData.namespace_id) : null),
     [workloadData?.namespace_id ?? ''],
@@ -529,7 +527,7 @@ export function WorkloadDetail() {
         {(workload) => (
           <AsyncView state={podsState}>
             {(pods) => {
-          const ownedPods = (pods?.items ?? []).filter((p) => p.workload_id === workload.id);
+          const ownedPods = pods?.items ?? [];
           const nodes = Array.from(new Set(ownedPods.map((p) => p.node_name).filter(Boolean))) as string[];
           return (
             <>

@@ -626,6 +626,7 @@ export function getWorkload(id: string) {
 export function listPods(filter?: {
   namespace_id?: string;
   node_name?: string;
+  workload_id?: string;
   image?: string;
 }) {
   return request<PagedResponse<Pod>>('/v1/pods' + query({ limit: 200, ...filter }));
