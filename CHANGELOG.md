@@ -19,6 +19,18 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   and click-to-navigate. Prometheus metrics:
   `argos_impact_queries_total`, `argos_impact_query_duration_seconds`.
 
+- **UI redesign — design system alignment** — CSS migrated to canonical
+  design system tokens (~50 CSS variables). Space Grotesk (headings/body)
+  and JetBrains Mono (code) webfonts installed via Google Fonts. 11 SVG
+  entity icons added to sidebar navigation, list page headings, detail
+  page headings, EOL dashboard, and login page.
+
+- **Sidebar navigation** — top nav bar replaced with a left sidebar.
+  Entity links (Clusters, Namespaces, Nodes, etc.) are always visible
+  with icons. Burger button collapses the sidebar to icons-only (48px).
+  Active link highlighted with cyan accent + left border. Top header
+  bar retained for app title, username, role pill, and sign out.
+
 ### Changed
 
 - **EOL Inventory redesign** — the EOL Dashboard is renamed to
