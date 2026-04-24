@@ -1057,26 +1057,36 @@ export function NodeDetail() {
                                 </tr>
                               </thead>
                               <tbody>
-                                {p.items.map((pod) => (
-                                  <tr key={pod.id}>
-                                    <td>
-                                      <Link to={`/pods/${pod.id}`}>
-                                        <strong>{pod.name}</strong>
-                                      </Link>
-                                    </td>
-                                    <td>{pod.phase || <Dash />}</td>
-                                    <td>
-                                      {pod.workload_id ? (
-                                        <IdLink
-                                          to={`/workloads/${pod.workload_id}`}
-                                          id={pod.workload_id}
-                                        />
-                                      ) : (
-                                        <Dash />
-                                      )}
-                                    </td>
-                                  </tr>
-                                ))}
+                                {p.items.map((pod) => {
+                                  const wl = pod.workload_id ? wlById.get(pod.workload_id) : undefined;
+                                  return (
+                                    <tr key={pod.id}>
+                                      <td>
+                                        <Link to={`/pods/${pod.id}`}>
+                                          <strong>{pod.name}</strong>
+                                        </Link>
+                                      </td>
+                                      <td>{pod.phase || <Dash />}</td>
+                                      <td>
+                                        {wl ? (
+                                          <Link to={`/workloads/${wl.id}`}>
+                                            {wl.name}{' '}
+                                            <span className="muted" style={{ fontSize: 'var(--fs-sm)' }}>
+                                              {wl.kind}
+                                            </span>
+                                          </Link>
+                                        ) : pod.workload_id ? (
+                                          <IdLink
+                                            to={`/workloads/${pod.workload_id}`}
+                                            id={pod.workload_id}
+                                          />
+                                        ) : (
+                                          <Dash />
+                                        )}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
                               </tbody>
                             </table>
                           )}
