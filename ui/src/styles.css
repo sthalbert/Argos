@@ -98,34 +98,101 @@ a:hover {
   text-decoration: underline;
 }
 
-header.app {
+/* --- Sidebar layout ------------------------------------------------------ */
+.app-layout {
+  display: flex;
+  min-height: 100vh;
+}
+.sidebar {
+  width: 180px;
+  flex-shrink: 0;
+  background: var(--bg-2);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 0.5rem 0;
+  transition: width 0.15s ease;
+}
+.sidebar-collapsed .sidebar {
+  width: 48px;
+}
+.sidebar-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 0.6rem;
+  margin: 0 0.5rem 0.25rem;
+  border-radius: var(--radius-md);
+}
+.sidebar-toggle:hover {
+  color: var(--fg-1);
+  background: var(--bg-3);
+}
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  overflow-y: auto;
+}
+.sidebar-nav a {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.75rem;
+  color: var(--fg-3);
+  font-size: var(--fs-base);
+  text-decoration: none;
+  border-left: 3px solid transparent;
+}
+.sidebar-collapsed .sidebar-nav a {
+  justify-content: center;
+  padding: 0.55rem;
+}
+.sidebar-nav a:hover {
+  background: var(--bg-3);
+  text-decoration: none;
+}
+.sidebar-nav a.active {
+  color: var(--accent);
+  border-left-color: var(--accent);
+  background: rgba(92, 200, 255, 0.06);
+}
+.sidebar-collapsed .sidebar-nav a.active {
+  border-left-color: transparent;
+}
+.sidebar-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 0.5rem 0.75rem;
+}
+
+/* --- Top header bar ------------------------------------------------------ */
+.app-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.app-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.75rem 1.25rem;
+  padding: 0.6rem 1.25rem;
   border-bottom: 1px solid var(--border);
   background: var(--bg-2);
 }
-
-header.app h1 {
+.app-header h1 {
   font-size: var(--fs-h2);
   margin: 0;
   font-weight: var(--fw-semi);
   letter-spacing: var(--ls-wide);
 }
-
-header.app nav a {
-  margin-right: 1rem;
-  color: var(--fg-3);
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-}
-header.app nav a.active {
-  color: var(--accent);
-}
-
-header.app button {
+.app-header button {
   background: transparent;
   color: var(--fg-muted);
   border: 1px solid var(--border);
@@ -134,7 +201,7 @@ header.app button {
   border-radius: var(--radius-md);
   cursor: pointer;
 }
-header.app button:hover {
+.app-header button:hover {
   color: var(--fg-1);
   border-color: var(--fg-muted);
 }
