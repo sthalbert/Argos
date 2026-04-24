@@ -215,10 +215,12 @@ func buildHTTPServer(cfg *runConfig, pg *store.PG, oidcProvider *auth.OIDCProvid
 		[]api.StrictMiddlewareFunc{api.InjectRequestMiddleware},
 		api.StrictHTTPServerOptions{
 			RequestErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
-				http.Error(w, err.Error(), http.StatusBadRequest)
+				slog.Warn("request parse error", slog.Any("error", err))
+				http.Error(w, "invalid request", http.StatusBadRequest)
 			},
 			ResponseErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				slog.Error("unhandled handler error", slog.Any("error", err))
+				http.Error(w, "internal server error", http.StatusInternalServerError)
 			},
 		},
 	)
