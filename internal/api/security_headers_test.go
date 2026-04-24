@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -26,7 +27,7 @@ func TestSecurityHeadersMiddleware(t *testing.T) {
 		t.Run(tt.header, func(t *testing.T) {
 			t.Parallel()
 			rec := httptest.NewRecorder()
-			handler.ServeHTTP(rec, httptest.NewRequest("GET", "/", http.NoBody))
+			handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), "GET", "/", http.NoBody))
 			if got := rec.Header().Get(tt.header); got != tt.want {
 				t.Errorf("%s = %q, want %q", tt.header, got, tt.want)
 			}
@@ -44,7 +45,7 @@ func TestSecurityHeadersHSTS(t *testing.T) {
 	t.Run("no HSTS on plain HTTP", func(t *testing.T) {
 		t.Parallel()
 		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, httptest.NewRequest("GET", "http://localhost/", http.NoBody))
+		handler.ServeHTTP(rec, httptest.NewRequestWithContext(context.Background(), "GET", "http://localhost/", http.NoBody))
 		if got := rec.Header().Get("Strict-Transport-Security"); got != "" {
 			t.Errorf("HSTS should not be set on plain HTTP, got %q", got)
 		}
@@ -53,7 +54,7 @@ func TestSecurityHeadersHSTS(t *testing.T) {
 	t.Run("HSTS on X-Forwarded-Proto https", func(t *testing.T) {
 		t.Parallel()
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest("GET", "http://localhost/", http.NoBody)
+		req := httptest.NewRequestWithContext(context.Background(), "GET", "http://localhost/", http.NoBody)
 		req.Header.Set("X-Forwarded-Proto", "https")
 		handler.ServeHTTP(rec, req)
 		if got := rec.Header().Get("Strict-Transport-Security"); got == "" {

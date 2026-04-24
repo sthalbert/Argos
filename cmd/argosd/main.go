@@ -210,8 +210,9 @@ func buildHTTPServer(cfg *runConfig, pg *store.PG, oidcProvider *auth.OIDCProvid
 	impactAuth := auth.Middleware(pg, cfg.cookiePolicy)
 	mux.Handle("GET /v1/impact/{entity_type}/{id}", requireReadScope(impactAuth(impact.HandleImpact(pg))))
 
+	loginLimiter := api.NewLoginRateLimiter()
 	strict := api.NewStrictHandlerWithOptions(
-		api.NewServer(version, pg, cfg.cookiePolicy, oidcProvider),
+		api.NewServer(version, pg, cfg.cookiePolicy, oidcProvider, loginLimiter),
 		[]api.StrictMiddlewareFunc{api.InjectRequestMiddleware},
 		api.StrictHTTPServerOptions{
 			RequestErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
