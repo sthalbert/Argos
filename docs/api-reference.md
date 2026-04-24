@@ -153,6 +153,13 @@ curl -sS -H "Authorization: Bearer $TOKEN" \
   'http://localhost:8080/v1/pods?node_name=worker-02.prod'
 ```
 
+**Filter pods by workload:**
+
+```bash
+curl -sS -H "Authorization: Bearer $TOKEN" \
+  'http://localhost:8080/v1/pods?workload_id=<uuid>'
+```
+
 ## Workloads
 
 | Method | Path | Scope | Description |
