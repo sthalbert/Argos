@@ -23,6 +23,7 @@ var (
 type PodListFilter struct {
 	NamespaceID *uuid.UUID
 	NodeName    *string
+	WorkloadID  *uuid.UUID
 	// ImageSubstring matches any container (init included) whose `image`
 	// field case-insensitively contains the substring.
 	ImageSubstring *string

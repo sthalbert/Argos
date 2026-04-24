@@ -33,6 +33,21 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   (e.g. `1.32.3` when the entity runs `1.28`). Zero additional API
   calls — the data is already fetched.
 
+### Fixed
+
+- **Workload detail missing pods on large clusters** — the WorkloadDetail
+  page fetched all pods cluster-wide (`limit=200`) and filtered
+  client-side by `workload_id`. On clusters with 500+ pods,
+  StatefulSet pods (long-lived, less recently updated) fell outside the
+  first pagination page and were never displayed. Fixed by adding a
+  server-side `workload_id` query parameter to `GET /v1/pods` so the
+  API returns only the matching pods.
+
+- **Pod pages showing UUIDs instead of names** — the Pods list page
+  rendered workload as a truncated UUID; the Pod detail page rendered
+  both namespace and workload as UUIDs. Both now resolve and display
+  human-readable names with links.
+
 ### Upgrading
 
 No breaking changes, no migrations. The impact endpoint is available

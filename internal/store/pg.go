@@ -1138,6 +1138,10 @@ func (p *PG) ListPods(ctx context.Context, filter api.PodListFilter, limit int, 
 		args = append(args, *filter.NodeName)
 		conds = append(conds, fmt.Sprintf("node_name = $%d", len(args)))
 	}
+	if filter.WorkloadID != nil {
+		args = append(args, *filter.WorkloadID)
+		conds = append(conds, fmt.Sprintf("workload_id = $%d", len(args)))
+	}
 	if filter.ImageSubstring != nil && *filter.ImageSubstring != "" {
 		// Case-insensitive substring match against any container's `image`
 		// string. jsonb_array_elements unpacks the array so we can compare

@@ -512,6 +512,7 @@ paths:
         - $ref: '#/components/parameters/PodNamespaceIdFilter'
         - $ref: '#/components/parameters/PodImageFilter'
         - $ref: '#/components/parameters/PodNodeNameFilter'
+        - $ref: '#/components/parameters/PodWorkloadIdFilter'
       responses:
         '200':
           description: Paged list of pods.
@@ -2146,6 +2147,17 @@ components:
       schema:
         type: string
         maxLength: 253
+
+    PodWorkloadIdFilter:
+      name: workload_id
+      in: query
+      required: false
+      description: |
+        Filter pods by their controlling workload. Returns only pods whose
+        `workload_id` FK matches the given UUID.
+      schema:
+        type: string
+        format: uuid
 
     WorkloadId:
       name: id

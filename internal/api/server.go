@@ -536,6 +536,7 @@ func (s *Server) ListPods(ctx context.Context, req ListPodsRequestObject) (ListP
 	filter := PodListFilter{
 		NamespaceID:    req.Params.NamespaceId,
 		NodeName:       req.Params.NodeName,
+		WorkloadID:     req.Params.WorkloadId,
 		ImageSubstring: req.Params.Image,
 	}
 

@@ -485,17 +485,14 @@ export function NamespaceDetail() {
 
 export function WorkloadDetail() {
   const { id = '' } = useParams();
-  const state = useResources(
-    [() => api.getWorkload(id), () => api.listPods({ namespace_id: undefined })] as const,
+  const workloadState = useResource(() => api.getWorkload(id), [id]);
+  // Fetch pods server-side filtered by workload_id so the result set
+  // is bounded to this workload's pods regardless of cluster size.
+  const podsState = useResource(
+    () => api.listPods({ workload_id: id }),
     [id],
   );
-  // We fetch ALL pods and filter by workload_id client-side, since
-  // /v1/pods doesn't yet have a workload_id query param. Namespace_id
-  // narrowing happens after we know the workload's namespace.
-  //
-  // Resolve the parent namespace so the KV row shows its name (and its
-  // cluster's name) rather than a bare UUID.
-  const workloadData = state.status === 'ready' ? state.data[0] : null;
+  const workloadData = workloadState.status === 'ready' ? workloadState.data : null;
   const namespaceResult = useResource(
     async () => (workloadData ? api.getNamespace(workloadData.namespace_id) : null),
     [workloadData?.namespace_id ?? ''],
@@ -526,9 +523,11 @@ export function WorkloadDetail() {
         )}
         <span>this workload</span>
       </div>
-      <AsyncView state={state}>
-        {([workload, pods]) => {
-          const ownedPods = pods.items.filter((p) => p.workload_id === workload.id);
+      <AsyncView state={workloadState}>
+        {(workload) => (
+          <AsyncView state={podsState}>
+            {(pods) => {
+          const ownedPods = pods?.items ?? [];
           const nodes = Array.from(new Set(ownedPods.map((p) => p.node_name).filter(Boolean))) as string[];
           return (
             <>
@@ -654,6 +653,8 @@ export function WorkloadDetail() {
             </>
           );
         }}
+          </AsyncView>
+        )}
       </AsyncView>
       <ImpactSection entityType="workloads" entityId={id} />
     </>
@@ -665,13 +666,25 @@ export function WorkloadDetail() {
 export function PodDetail() {
   const { id = '' } = useParams();
   const state = useResource(() => api.getPod(id), [id]);
+  const podData = state.status === 'ready' ? state.data : null;
+  const nsResult = useResource(
+    async () => (podData ? api.getNamespace(podData.namespace_id) : null),
+    [podData?.namespace_id ?? ''],
+  );
+  const wlResult = useResource(
+    async () => (podData?.workload_id ? api.getWorkload(podData.workload_id) : null),
+    [podData?.workload_id ?? ''],
+  );
   return (
     <>
       <div className="breadcrumb">
         <Link to="/pods">Pods</Link> / <span>this pod</span>
       </div>
       <AsyncView state={state}>
-        {(pod) => (
+        {(pod) => {
+          const ns = nsResult.status === 'ready' ? nsResult.data : null;
+          const wl = wlResult.status === 'ready' ? wlResult.data : null;
+          return (
           <>
             <h2>
               {pod.name} <LayerPill layer={pod.layer} />
@@ -682,12 +695,22 @@ export function PodDetail() {
               <KV k="Pod IP" v={pod.pod_ip && <code>{pod.pod_ip}</code>} />
               <KV
                 k="Namespace"
-                v={<IdLink to={`/namespaces/${pod.namespace_id}`} id={pod.namespace_id} />}
+                v={
+                  ns ? (
+                    <Link to={`/namespaces/${ns.id}`}>{ns.display_name || ns.name}</Link>
+                  ) : (
+                    <IdLink to={`/namespaces/${pod.namespace_id}`} id={pod.namespace_id} />
+                  )
+                }
               />
               <KV
                 k="Workload"
                 v={
-                  pod.workload_id ? (
+                  wl ? (
+                    <Link to={`/workloads/${wl.id}`}>
+                      {wl.name} <span className="muted" style={{ fontSize: '0.8rem' }}>{wl.kind}</span>
+                    </Link>
+                  ) : pod.workload_id ? (
                     <IdLink to={`/workloads/${pod.workload_id}`} id={pod.workload_id} />
                   ) : (
                     <span className="muted">(unmanaged / unknown owner kind)</span>
@@ -735,7 +758,8 @@ export function PodDetail() {
               </table>
             )}
           </>
-        )}
+          );
+        }}
       </AsyncView>
       <ImpactSection entityType="pods" entityId={id} />
     </>
