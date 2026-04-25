@@ -3566,9 +3566,9 @@ func scanPersistentVolumeClaim(row pgx.Row) (api.PersistentVolumeClaim, error) {
 // GetSettings returns the current runtime settings from the single-row
 // settings table.
 func (p *PG) GetSettings(ctx context.Context) (api.Settings, error) {
-	const q = `SELECT eol_enabled, updated_at FROM settings WHERE id = 1`
+	const q = `SELECT eol_enabled, mcp_enabled, updated_at FROM settings WHERE id = 1`
 	var s api.Settings
-	if err := p.pool.QueryRow(ctx, q).Scan(&s.EOLEnabled, &s.UpdatedAt); err != nil {
+	if err := p.pool.QueryRow(ctx, q).Scan(&s.EOLEnabled, &s.MCPEnabled, &s.UpdatedAt); err != nil {
 		return api.Settings{}, fmt.Errorf("get settings: %w", err)
 	}
 	return s, nil
@@ -3583,6 +3583,11 @@ func (p *PG) UpdateSettings(ctx context.Context, in api.SettingsPatch) (api.Sett
 	if in.EOLEnabled != nil {
 		sets = append(sets, fmt.Sprintf("eol_enabled=$%d", idx))
 		args = append(args, *in.EOLEnabled)
+		idx++
+	}
+	if in.MCPEnabled != nil {
+		sets = append(sets, fmt.Sprintf("mcp_enabled=$%d", idx))
+		args = append(args, *in.MCPEnabled)
 		idx++
 	}
 

@@ -20,6 +20,7 @@ Replaces the Kubernetes-scoped portion of [Mercator](https://github.com/dbsystel
 - **Curated metadata** -- operators annotate clusters with owner, criticality, runbook URL, and free-form notes.
 - **End-of-life inventory** -- enricher queries endoflife.date, flags EOL / approaching-EOL software, shows the latest available version to upgrade to.
 - **Impact analysis graph** -- interactive dependency diagram on every entity page; assess blast radius before a change.
+- **MCP server** -- Model Context Protocol interface exposing read-only CMDB tools for AI agents; SSE and stdio transports.
 - **Audit log** -- every state-changing call is recorded; passwords and tokens are scrubbed.
 - **Embedded web UI** -- React SPA shipped inside the binary at `/ui/`.
 
@@ -62,6 +63,7 @@ See [Getting Started](docs/getting-started.md) for the full walkthrough includin
 | [API Reference](docs/api-reference.md) | REST endpoints with curl examples. |
 | [EOL Enrichment](docs/eol-enrichment.md) | End-of-life inventory: setup, dashboard, annotation format. |
 | [Impact Analysis](docs/impact-analysis.md) | Dependency graph: assess blast radius of a change. |
+| [MCP Server](docs/mcp-server.md) | Model Context Protocol server for AI agent integrations. |
 | [Monitoring](docs/monitoring.md) | Prometheus metrics, alerts, Grafana tips. |
 | [Architecture](docs/architecture.md) | How Argos works internally. |
 
@@ -103,6 +105,7 @@ See [Getting Started](docs/getting-started.md) for the full walkthrough includin
 | [0011](docs/adr/adr-0011-persistent-volumes-and-claims.md) | PersistentVolumes and PVCs in the CMDB. |
 | [0012](docs/adr/adr-0012-eol-enrichment-via-endoflife-date.md) | End-of-life enrichment via endoflife.date. |
 | [0013](docs/adr/adr-0013-impact-analysis-graph.md) | Impact analysis graph for blast-radius assessment. |
+| [0014](docs/adr/adr-0014-mcp-server.md) | MCP server for AI agent access to the CMDB. |
 
 ## Contributing
 
