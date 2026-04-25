@@ -21,6 +21,7 @@ import (
 	"github.com/sthalbert/argos/internal/collector"
 	"github.com/sthalbert/argos/internal/eol"
 	"github.com/sthalbert/argos/internal/impact"
+	argmcp "github.com/sthalbert/argos/internal/mcp"
 	"github.com/sthalbert/argos/internal/metrics"
 	"github.com/sthalbert/argos/internal/store"
 	"github.com/sthalbert/argos/ui"
@@ -137,6 +138,12 @@ func run() error {
 		return err
 	}
 	defer drainEOL()
+
+	drainMCP, err := maybeStartMCPServer(rootCtx, pg)
+	if err != nil {
+		return err
+	}
+	defer drainMCP()
 
 	srv := buildHTTPServer(&cfg, pg, oidcProvider)
 
@@ -585,6 +592,113 @@ func maybeStartEOLEnricher(ctx context.Context, s api.Store) (func(), error) {
 		slog.String("interval", interval.String()),
 		slog.Int("approaching_days", approachingDays),
 		slog.String("base_url", baseURL),
+	)
+
+	return wg.Wait, nil
+}
+
+// maybeStartMCPServer spawns the MCP server goroutine (ADR-0014).
+// The goroutine always starts; tool calls are gated by the `mcp_enabled`
+// setting in the database (toggled by admins via the UI).
+// ARGOS_MCP_ENABLED seeds the DB setting on first boot when present.
+//
+//nolint:gocyclo,gocognit // auth setup + env parsing + goroutine lifecycle is inherently branchy.
+func maybeStartMCPServer(ctx context.Context, s *store.PG) (func(), error) {
+	if envVal := os.Getenv("ARGOS_MCP_ENABLED"); envVal != "" {
+		enabled, err := strconv.ParseBool(envVal)
+		if err != nil {
+			return nil, fmt.Errorf("parse ARGOS_MCP_ENABLED=%q: %w", envVal, err)
+		}
+		if _, err := s.UpdateSettings(ctx, api.SettingsPatch{MCPEnabled: &enabled}); err != nil {
+			slog.Warn("mcp server: failed to seed settings from env", slog.Any("error", err))
+		}
+	}
+
+	transport := envOr("ARGOS_MCP_TRANSPORT", "sse")
+	addr := envOr("ARGOS_MCP_ADDR", ":8090")
+	token := os.Getenv("ARGOS_MCP_TOKEN")
+
+	// For SSE transport, validate bearer tokens on every tool call using
+	// the same auth store that the REST API uses.
+	// For SSE transport, validate bearer tokens on every tool call.
+	// Argon2id verification is expensive (~100-500ms, 64 MiB), so we
+	// cache verified prefixes for 5 minutes to avoid re-hashing on
+	// every tool call in a conversation.
+	var authFn argmcp.AuthFunc
+	if transport == "sse" {
+		type cachedAuth struct {
+			validUntil time.Time
+			fullToken  string // last verified full token for this prefix
+		}
+		var (
+			cacheMu sync.Mutex
+			cache   = make(map[string]cachedAuth)
+		)
+		const cacheTTL = 5 * time.Minute
+
+		authFn = func(ctx context.Context, rawToken string) error {
+			prefix, full, err := auth.ParseToken(rawToken)
+			if err != nil {
+				return fmt.Errorf("invalid token: %w", err)
+			}
+
+			// Check cache — skip argon2id if recently verified.
+			cacheMu.Lock()
+			if entry, ok := cache[prefix]; ok && time.Now().Before(entry.validUntil) && entry.fullToken == full {
+				cacheMu.Unlock()
+				return nil
+			}
+			cacheMu.Unlock()
+
+			// Full verification: DB lookup + argon2id.
+			tok, err := s.GetActiveTokenByPrefix(ctx, prefix)
+			if err != nil {
+				return fmt.Errorf("token lookup failed: %w", err)
+			}
+			if verr := auth.VerifyPassword(full, tok.Hash); verr != nil {
+				return fmt.Errorf("token verification failed: %w", verr)
+			}
+			hasRead := false
+			for _, scope := range tok.Scopes {
+				if scope == "read" || scope == "admin" {
+					hasRead = true
+					break
+				}
+			}
+			if !hasRead {
+				return errors.New("token lacks read scope") //nolint:err113 // one-off auth error
+			}
+
+			// Cache the verified result.
+			cacheMu.Lock()
+			cache[prefix] = cachedAuth{validUntil: time.Now().Add(cacheTTL), fullToken: full}
+			cacheMu.Unlock()
+			return nil
+		}
+	}
+
+	cfg := argmcp.Config{
+		Transport: transport,
+		Addr:      addr,
+		Token:     token,
+		Auth:      authFn,
+	}
+
+	traverser := impact.NewTraverser(s)
+	mcpSrv := argmcp.NewServer(s, traverser, cfg)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := mcpSrv.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			slog.Error("mcp server exited with error", slog.String("error", err.Error()))
+		}
+	}()
+
+	slog.Info("mcp server goroutine started (tool calls gated by DB setting)",
+		slog.String("transport", transport),
+		slog.String("addr", addr),
 	)
 
 	return wg.Wait, nil

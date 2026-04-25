@@ -108,6 +108,21 @@ var (
 		Help:      "Impact graph query duration in seconds.",
 		Buckets:   prometheus.DefBuckets,
 	}, []string{"entity_type"})
+
+	mcpToolCalls = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "argos",
+		Subsystem: "mcp",
+		Name:      "tool_calls_total",
+		Help:      "MCP tool calls, per tool name.",
+	}, []string{"tool"})
+
+	mcpToolDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "argos",
+		Subsystem: "mcp",
+		Name:      "tool_duration_seconds",
+		Help:      "MCP tool call duration in seconds.",
+		Buckets:   prometheus.DefBuckets,
+	}, []string{"tool"})
 )
 
 func init() {
@@ -126,6 +141,8 @@ func init() {
 		eolLastRun,
 		impactQueries,
 		impactDuration,
+		mcpToolCalls,
+		mcpToolDuration,
 	)
 }
 
@@ -187,6 +204,12 @@ func MarkEOLRun() {
 func ObserveImpactQuery(entityType string, duration time.Duration) {
 	impactQueries.WithLabelValues(entityType).Inc()
 	impactDuration.WithLabelValues(entityType).Observe(duration.Seconds())
+}
+
+// ObserveMCPToolCall records an MCP tool call.
+func ObserveMCPToolCall(tool string, duration time.Duration) {
+	mcpToolCalls.WithLabelValues(tool).Inc()
+	mcpToolDuration.WithLabelValues(tool).Observe(duration.Seconds())
 }
 
 // MarkPoll stamps the last-successful-poll gauge with the current time.

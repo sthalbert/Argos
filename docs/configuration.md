@@ -86,6 +86,17 @@ The EOL enricher is controlled at runtime via the **Admin > Settings** UI. These
 | `ARGOS_EOL_APPROACHING_DAYS` | no | `90` | Number of days before EOL to flag a product as "approaching EOL". |
 | `ARGOS_EOL_BASE_URL` | no | `https://endoflife.date` | Base URL for the endoflife.date API. Override to point at an internal mirror in air-gapped environments. |
 
+### MCP server
+
+The MCP (Model Context Protocol) server is disabled by default. It exposes read-only CMDB tools for AI agents. See [MCP Server](mcp-server.md) for the full guide.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ARGOS_MCP_ENABLED` | no | `false` | Enable the MCP server. When set, its value is also written to the `mcp_enabled` database setting on boot. The admin can override it at runtime via Admin > Settings. |
+| `ARGOS_MCP_TRANSPORT` | no | `sse` | Transport protocol. Values: `sse` (Server-Sent Events over HTTP) or `stdio` (standard I/O, for local tool integration). |
+| `ARGOS_MCP_ADDR` | no | `:3001` | Listen address for the SSE transport. Ignored when transport is `stdio`. |
+| `ARGOS_MCP_TOKEN` | no | -- | Bearer token required for MCP requests. When unset, the MCP server inherits the standard argosd bearer token authentication. |
+
 ### Security
 
 The following security features are built-in and require no configuration:

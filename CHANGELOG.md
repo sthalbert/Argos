@@ -19,6 +19,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   and click-to-navigate. Prometheus metrics:
   `argos_impact_queries_total`, `argos_impact_query_duration_seconds`.
 
+- **MCP server** (ADR-0014) — Model Context Protocol server exposing 17
+  read-only CMDB tools for AI agents. SSE and stdio transports. Bearer
+  token auth. Admin toggle at Admin > Settings. Prometheus metrics.
+
 - **UI redesign — design system alignment** — CSS migrated to canonical
   design system tokens (~50 CSS variables). Space Grotesk (headings/body)
   and JetBrains Mono (code) webfonts installed via Google Fonts. 11 SVG

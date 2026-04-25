@@ -509,6 +509,7 @@ type AuditEventInsert struct {
 // settings table.
 type Settings struct {
 	EOLEnabled bool      `json:"eol_enabled"`
+	MCPEnabled bool      `json:"mcp_enabled"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
@@ -516,6 +517,7 @@ type Settings struct {
 // left unchanged.
 type SettingsPatch struct {
 	EOLEnabled *bool `json:"eol_enabled,omitempty"`
+	MCPEnabled *bool `json:"mcp_enabled,omitempty"`
 }
 
 // AuditEventFilter collects the optional server-side filters. Nil

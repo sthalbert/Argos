@@ -473,3 +473,9 @@ curl -sS -b /tmp/argos.cookies \
 ---
 
 For the full schema (request/response bodies, field types, constraints), see the OpenAPI specification at `api/openapi/openapi.yaml`.
+
+---
+
+## MCP server (alternative query interface)
+
+Argos also exposes a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server with 17 read-only tools that mirror the REST query surface. The MCP interface is designed for AI agents and supports SSE and stdio transports. It is **not** part of the REST API -- see [MCP Server](mcp-server.md) for setup, tool catalogue, and authentication details.
