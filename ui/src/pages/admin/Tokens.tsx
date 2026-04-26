@@ -1,7 +1,14 @@
 import { FormEvent, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import * as api from '../../api';
 import { useResource } from '../../hooks';
 import { AsyncView, Dash, SectionTitle } from '../../components';
+
+// Token presets per ADR-0007 + ADR-0015. The OpenAPI request type is
+// fixed (name, scopes, expires_at) so vm-collector tokens currently
+// can't be minted from the UI — the form keeps the affordance visible
+// but disabled with a note that the backend extension is pending.
+type Preset = 'standard' | 'vm-collector';
 
 // Admin Tokens page. The one-shot plaintext reveal is the load-bearing
 // piece: after a successful mint we render a callout with the full
@@ -86,7 +93,13 @@ function MintForm({
   reload: Reload;
   onMinted: (m: api.ApiTokenMint) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [searchParams] = useSearchParams();
+  const initialBind = searchParams.get('bind') ?? '';
+
+  const [open, setOpen] = useState(initialBind !== '');
+  const [preset, setPreset] = useState<Preset>(
+    initialBind ? 'vm-collector' : 'standard',
+  );
   const [name, setName] = useState('');
   const [scopes, setScopes] = useState<Record<api.TokenScope, boolean>>({
     read: true,
@@ -94,14 +107,61 @@ function MintForm({
     delete: false,
   });
   const [expiresAt, setExpiresAt] = useState('');
+  const [boundCloudAccountId, setBoundCloudAccountId] = useState<string>(initialBind);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Cloud accounts dropdown for the vm-collector preset. Loads only when
+  // the user actually selects the preset.
+  const accountsState = useResource(
+    () =>
+      preset === 'vm-collector'
+        ? api.listCloudAccounts()
+        : Promise.resolve(null),
+    [preset],
+  );
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
     if (!name.trim()) {
       setError('Name required.');
+      return;
+    }
+    if (preset === 'vm-collector') {
+      if (!boundCloudAccountId) {
+        setError('Pick a cloud account to bind the token to.');
+        return;
+      }
+      setBusy(true);
+      try {
+        // Hand-written endpoint POST /v1/admin/cloud-accounts/{id}/tokens
+        // mints a PAT scoped to "vm-collector" and bound to the URL's
+        // cloud_account id (ADR-0015 §5).
+        const minted = await api.createCloudAccountToken(boundCloudAccountId, {
+          name: name.trim(),
+          expires_at: expiresAt ? new Date(expiresAt).toISOString() : null,
+        });
+        // Adapt to ApiTokenMint shape so the existing minted-display card works.
+        onMinted({
+          id: minted.id,
+          name: minted.name,
+          prefix: minted.prefix,
+          scopes: minted.scopes as api.TokenScope[],
+          created_by_user_id: minted.created_by_user_id,
+          created_at: minted.created_at,
+          expires_at: minted.expires_at ?? null,
+          token: minted.token,
+        });
+        setName('');
+        setExpiresAt('');
+        setOpen(false);
+        reload();
+      } catch (err) {
+        setError(err instanceof api.ApiError ? err.message : String(err));
+      } finally {
+        setBusy(false);
+      }
       return;
     }
     const sel: api.TokenScope[] = (Object.keys(scopes) as api.TokenScope[]).filter(
@@ -140,10 +200,23 @@ function MintForm({
     );
   }
 
+  const accountList =
+    accountsState.status === 'ready' && accountsState.data
+      ? accountsState.data.items
+      : [];
+  const isVmCollector = preset === 'vm-collector';
+
   return (
     <form className="admin-form" onSubmit={submit}>
       <h3>Mint machine token</h3>
       <div className="admin-form-row">
+        <div>
+          <label>Preset</label>
+          <select value={preset} onChange={(e) => setPreset(e.target.value as Preset)}>
+            <option value="standard">Standard (read / write / delete)</option>
+            <option value="vm-collector">VM Collector</option>
+          </select>
+        </div>
         <div>
           <label>Name</label>
           <input
@@ -162,25 +235,47 @@ function MintForm({
           />
         </div>
       </div>
-      <div>
-        <label>Scopes</label>
-        <div className="scope-checkboxes">
-          {(['read', 'write', 'delete'] as api.TokenScope[]).map((s) => (
-            <label key={s} className="scope-checkbox">
-              <input
-                type="checkbox"
-                checked={scopes[s]}
-                onChange={(e) => setScopes({ ...scopes, [s]: e.target.checked })}
-              />
-              <code>{s}</code>
-            </label>
-          ))}
+      {isVmCollector ? (
+        <div>
+          <label>Bound to cloud account</label>
+          <select
+            value={boundCloudAccountId}
+            onChange={(e) => setBoundCloudAccountId(e.target.value)}
+          >
+            <option value="">Select a cloud account…</option>
+            {accountList.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name} ({a.provider}/{a.region})
+              </option>
+            ))}
+          </select>
+          <p className="muted" style={{ fontSize: 'var(--fs-sm)' }}>
+            VM-collector tokens carry the narrow <code>vm-collector</code> scope and
+            are bound to one cloud account at issue time (ADR-0015 §5). A leaked
+            token can only access this one account&apos;s credentials and VMs.
+          </p>
         </div>
-        <p className="muted" style={{ fontSize: '0.8rem' }}>
-          Tokens can only carry read / write / delete. Admin-only endpoints
-          are session-only for accountability.
-        </p>
-      </div>
+      ) : (
+        <div>
+          <label>Scopes</label>
+          <div className="scope-checkboxes">
+            {(['read', 'write', 'delete'] as api.TokenScope[]).map((s) => (
+              <label key={s} className="scope-checkbox">
+                <input
+                  type="checkbox"
+                  checked={scopes[s]}
+                  onChange={(e) => setScopes({ ...scopes, [s]: e.target.checked })}
+                />
+                <code>{s}</code>
+              </label>
+            ))}
+          </div>
+          <p className="muted" style={{ fontSize: '0.8rem' }}>
+            Tokens can only carry read / write / delete. Admin-only endpoints
+            are session-only for accountability.
+          </p>
+        </div>
+      )}
       <div className="admin-form-actions">
         <button type="submit" disabled={busy} className="primary">
           {busy ? 'Minting…' : 'Mint token'}

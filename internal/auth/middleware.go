@@ -15,11 +15,12 @@ import (
 // Scope values. These strings match exactly what `openapi.yaml` declares
 // per-operation; changing them means changing the spec + regenerating.
 const (
-	ScopeRead   = "read"
-	ScopeWrite  = "write"
-	ScopeDelete = "delete"
-	ScopeAdmin  = "admin"
-	ScopeAudit  = "audit"
+	ScopeRead        = "read"
+	ScopeWrite       = "write"
+	ScopeDelete      = "delete"
+	ScopeAdmin       = "admin"
+	ScopeAudit       = "audit"
+	ScopeVMCollector = "vm-collector"
 )
 
 // Role values — enum over the fixed role set from ADR-0007.
@@ -30,8 +31,10 @@ const (
 	RoleViewer  = "viewer"
 )
 
-// ValidRoles is the set accepted by the API surface. Keep in sync with
-// the CHECK constraint on the `users` table.
+// ValidRoles is the set accepted by the API surface for human users.
+// Keep in sync with the CHECK constraint on the `users` table. The
+// vm-collector scope (ADR-0015) is purely a token-issuance preset —
+// it never appears as a user's role.
 var ValidRoles = map[string]struct{}{
 	RoleAdmin:   {},
 	RoleEditor:  {},
@@ -39,10 +42,23 @@ var ValidRoles = map[string]struct{}{
 	RoleViewer:  {},
 }
 
+// TokenScopePreset is a UI shorthand for picking scope sets when an
+// admin issues a PAT. The four "role" presets mirror the user roles;
+// the vm-collector preset is the only one specific to machine clients
+// and requires binding to a cloud_account at issue time (ADR-0015).
+const (
+	TokenPresetAdmin       = "admin"
+	TokenPresetEditor      = "editor"
+	TokenPresetAuditor     = "auditor"
+	TokenPresetViewer      = "viewer"
+	TokenPresetVMCollector = "vm-collector"
+)
+
 // ScopesForRole returns the fixed scope set granted to a role. Admin
 // always carries the admin scope too; it implicitly satisfies any
 // scoped endpoint by the "admin implies all" convention the OpenAPI
-// enforcer uses.
+// enforcer uses, **except** for ScopeVMCollector, which is reserved
+// for collector tokens bound to a specific cloud_account (ADR-0015 §5).
 func ScopesForRole(role string) []string {
 	switch role {
 	case RoleAdmin:
@@ -55,6 +71,18 @@ func ScopesForRole(role string) []string {
 		return []string{ScopeRead}
 	}
 	return nil
+}
+
+// ScopesForTokenPreset returns the scope set associated with a token
+// issuance preset. Mirrors ScopesForRole for the "human" presets;
+// returns the single ScopeVMCollector for the collector preset.
+func ScopesForTokenPreset(preset string) []string {
+	switch preset {
+	case TokenPresetVMCollector:
+		return []string{ScopeVMCollector}
+	default:
+		return ScopesForRole(preset)
+	}
 }
 
 // CallerKind distinguishes human-session callers from machine-token
@@ -94,16 +122,61 @@ type Caller struct {
 	// it's true; everything else gets a 403 steering the UI to the
 	// rotation page.
 	MustChangePassword bool
+	// BoundCloudAccountID is set on tokens issued with the
+	// vm-collector scope (ADR-0015). When non-nil, handlers on
+	// per-account endpoints must verify the requested account
+	// matches this binding via EnforceCloudAccountBinding.
+	BoundCloudAccountID *uuid.UUID
 }
 
-// HasScope reports whether the caller carries want. Admin implies all.
+// HasScope reports whether the caller carries want.
+//
+// Admin scope implies every other "regular" scope (read / write /
+// delete / audit) — that's the simplifying convention from ADR-0007.
+//
+// Admin scope does **not** imply ScopeVMCollector: that scope is
+// reserved for collector tokens bound to a specific cloud_account
+// (ADR-0015 §5). Letting admin tokens fetch credentials would defeat
+// the SK-is-write-only-from-admin-endpoints guarantee.
 func (c *Caller) HasScope(want string) bool {
 	for _, s := range c.Scopes {
-		if s == ScopeAdmin || s == want {
+		if s == want {
+			return true
+		}
+		if s == ScopeAdmin && want != ScopeVMCollector {
 			return true
 		}
 	}
 	return false
+}
+
+// EnforceCloudAccountBinding verifies that a token caller carrying the
+// vm-collector scope is bound to the cloud_account identified by id.
+// Tokens without the vm-collector scope pass through unchecked — the
+// regular scope check is the only gate for those callers.
+//
+// Returns ErrUnauthorized when:
+//   - the caller is a vm-collector token with no binding (must never happen
+//     in production but defended against here);
+//   - the caller's binding does not equal id.
+func (c *Caller) EnforceCloudAccountBinding(id uuid.UUID) error {
+	hasVM := false
+	for _, s := range c.Scopes {
+		if s == ScopeVMCollector {
+			hasVM = true
+			break
+		}
+	}
+	if !hasVM {
+		return nil
+	}
+	if c.BoundCloudAccountID == nil {
+		return ErrUnauthorized
+	}
+	if *c.BoundCloudAccountID != id {
+		return ErrUnauthorized
+	}
+	return nil
 }
 
 type callerCtxKey struct{}
@@ -142,6 +215,10 @@ type APIToken struct {
 	Hash            string
 	Scopes          []string
 	CreatedByUserID uuid.UUID
+	// BoundCloudAccountID is set on tokens issued with the
+	// vm-collector scope (ADR-0015). Nullable — every other token
+	// kind leaves it empty.
+	BoundCloudAccountID *uuid.UUID
 }
 
 // User is the post-lookup view for attaching role + must_change_password.
@@ -330,11 +407,12 @@ func tryBearer(r *http.Request, store Store) (*Caller, error) {
 	_ = store.TouchToken(r.Context(), tok.ID, time.Now().UTC())
 
 	return &Caller{
-		Kind:      CallerKindToken,
-		TokenID:   tok.ID,
-		TokenName: tok.Name,
-		UserID:    tok.CreatedByUserID,
-		Scopes:    tok.Scopes,
+		Kind:                CallerKindToken,
+		TokenID:             tok.ID,
+		TokenName:           tok.Name,
+		UserID:              tok.CreatedByUserID,
+		Scopes:              tok.Scopes,
+		BoundCloudAccountID: tok.BoundCloudAccountID,
 	}, nil
 }
 

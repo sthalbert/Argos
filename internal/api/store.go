@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/sthalbert/argos/internal/auth"
+	"github.com/sthalbert/argos/internal/secrets"
 )
 
 // Sentinel errors returned by Store implementations. Handlers translate these
@@ -413,7 +414,93 @@ type Store interface {
 	// ListAuditEvents returns the newest events first, paged by opaque
 	// cursor. filter fields are AND-combined; nil fields are ignored.
 	ListAuditEvents(ctx context.Context, filter AuditEventFilter, limit int, cursor string) (items []AuditEvent, nextCursor string, err error)
+
+	// --- Cloud accounts (ADR-0015) -------------------------------------
+
+	// UpsertCloudAccount idempotently registers a cloud account by
+	// (provider, name). New rows are created in status='pending_credentials'.
+	UpsertCloudAccount(ctx context.Context, in CloudAccountUpsert) (CloudAccount, error)
+
+	// GetCloudAccount fetches by id. ErrNotFound when absent.
+	GetCloudAccount(ctx context.Context, id uuid.UUID) (CloudAccount, error)
+
+	// GetCloudAccountByName fetches by (provider, name). ErrNotFound when absent.
+	GetCloudAccountByName(ctx context.Context, provider, name string) (CloudAccount, error)
+
+	// GetCloudAccountByNameAny fetches by name across every provider
+	// in a single query. Used by credential-fetch handlers so a
+	// caller-by-name lookup doesn't fan out to one SQL round-trip per
+	// supported provider. Returns ErrNotFound when no row matches.
+	GetCloudAccountByNameAny(ctx context.Context, name string) (CloudAccount, error)
+
+	// ListCloudAccounts returns up to limit accounts after the given opaque cursor.
+	ListCloudAccounts(ctx context.Context, limit int, cursor string) (items []CloudAccount, nextCursor string, err error)
+
+	// UpdateCloudAccount applies merge-patch on curated metadata + name.
+	// Status transitions to/from `disabled` and `pending_credentials` are
+	// rejected here — see DisableCloudAccount / EnableCloudAccount and
+	// SetCloudAccountCredentials. Status field on the patch is allowed
+	// only between `active` and `error`.
+	UpdateCloudAccount(ctx context.Context, id uuid.UUID, in CloudAccountPatch) (CloudAccount, error)
+
+	// SetCloudAccountCredentials writes AK plaintext + SK ciphertext+nonce+kid
+	// and transitions status to `active`. ErrNotFound if the account is missing.
+	SetCloudAccountCredentials(ctx context.Context, id uuid.UUID, accessKey string, encSK secrets.Ciphertext) (CloudAccount, error)
+
+	// GetCloudAccountCredentials returns AK + SK ciphertext for callers
+	// (the handler decrypts). Returns ErrNotFound when status =
+	// `pending_credentials` or the row is absent. Returns ErrConflict
+	// when status = `disabled` (caller maps to 403).
+	GetCloudAccountCredentials(ctx context.Context, id uuid.UUID) (accessKey string, encSK secrets.Ciphertext, err error)
+
+	// UpdateCloudAccountStatus is the collector heartbeat path. Only
+	// allows transitions between `active` and `error`; rejects to/from
+	// `disabled` or `pending_credentials`.
+	UpdateCloudAccountStatus(ctx context.Context, id uuid.UUID, status string, lastSeenAt *time.Time, lastError *string) error
+
+	// DisableCloudAccount sets disabled_at and status='disabled'.
+	DisableCloudAccount(ctx context.Context, id uuid.UUID) error
+
+	// EnableCloudAccount clears disabled_at and resets status (active if
+	// credentials are present, otherwise pending_credentials).
+	EnableCloudAccount(ctx context.Context, id uuid.UUID) error
+
+	// DeleteCloudAccount removes a cloud account (cascades to VMs and tokens).
+	DeleteCloudAccount(ctx context.Context, id uuid.UUID) error
+
+	// CountCloudAccountsWithSecrets is used at startup to decide whether
+	// missing master-key configuration is fatal (see ADR-0015 §4).
+	CountCloudAccountsWithSecrets(ctx context.Context) (int, error)
+
+	// --- Virtual machines (ADR-0015) -----------------------------------
+
+	// UpsertVirtualMachine inserts a new VM or updates the existing row by
+	// (cloud_account_id, provider_vm_id). Server-side dedup against
+	// nodes.provider_id: returns ErrConflict if the provider_vm_id already
+	// appears in any node's provider_id (the VM is already inventoried as
+	// a Kubernetes node).
+	UpsertVirtualMachine(ctx context.Context, in VirtualMachineUpsert) (VirtualMachine, error)
+
+	// GetVirtualMachine fetches by id. ErrNotFound when absent.
+	GetVirtualMachine(ctx context.Context, id uuid.UUID) (VirtualMachine, error)
+
+	// ListVirtualMachines returns paged VMs filtered by VirtualMachineListFilter.
+	// terminated rows are excluded unless filter.IncludeTerminated.
+	ListVirtualMachines(ctx context.Context, filter VirtualMachineListFilter, limit int, cursor string) (items []VirtualMachine, nextCursor string, err error)
+
+	// UpdateVirtualMachine applies merge-patch on curated-only fields.
+	UpdateVirtualMachine(ctx context.Context, id uuid.UUID, in VirtualMachinePatch) (VirtualMachine, error)
+
+	// DeleteVirtualMachine soft-deletes by setting terminated_at,
+	// power_state='terminated', ready=false. Hard delete is left to retention.
+	DeleteVirtualMachine(ctx context.Context, id uuid.UUID) error
+
+	// ReconcileVirtualMachines soft-deletes every row of the given account
+	// whose provider_vm_id is not in keep AND terminated_at IS NULL.
+	// Returns the count of rows tombstoned.
+	ReconcileVirtualMachines(ctx context.Context, accountID uuid.UUID, keepProviderVMIDs []string) (tombstoned int64, err error)
 }
+
 
 // UserIdentityInsert carries the federation tuple persisted on first
 // OIDC login. Email is optional but useful for admin display.
@@ -481,6 +568,10 @@ type APITokenInsert struct { //nolint:revive // stutter is acceptable here for c
 	Scopes          []string
 	CreatedByUserID uuid.UUID
 	ExpiresAt       *time.Time
+	// BoundCloudAccountID is set when minting a vm-collector PAT
+	// (ADR-0015). The store persists it on the api_tokens row;
+	// nullable for every other token kind.
+	BoundCloudAccountID *uuid.UUID
 }
 
 // AuditEventInsert is the payload the middleware hands the store.

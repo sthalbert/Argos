@@ -123,6 +123,32 @@ var (
 		Help:      "MCP tool call duration in seconds.",
 		Buckets:   prometheus.DefBuckets,
 	}, []string{"tool"})
+
+	// VM-collector metrics on the argosd side (ADR-0015).
+	cloudAccountsTotal = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "argos",
+		Name:      "cloud_accounts_total",
+		Help:      "Number of registered cloud accounts, labelled by status.",
+	}, []string{"status"})
+
+	cloudAccountsPending = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "argos",
+		Name:      "cloud_accounts_pending_credentials",
+		Help:      "Number of cloud accounts in status=pending_credentials. A non-zero value means a collector is registered but admin has not yet supplied AK/SK.",
+	})
+
+	virtualMachinesTotal = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "argos",
+		Name:      "virtual_machines_total",
+		Help:      "Number of virtual machines, labelled by cloud account name and tombstone state.",
+	}, []string{"cloud_account", "terminated"})
+
+	credentialsReads = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "argos",
+		Subsystem: "cloud_accounts",
+		Name:      "credentials_reads_total",
+		Help:      "Cumulative successful credential fetches via GET /v1/cloud-accounts/.../credentials.",
+	}, []string{"cloud_account"})
 )
 
 func init() {
@@ -143,7 +169,36 @@ func init() {
 		impactDuration,
 		mcpToolCalls,
 		mcpToolDuration,
+		cloudAccountsTotal,
+		cloudAccountsPending,
+		virtualMachinesTotal,
+		credentialsReads,
 	)
+}
+
+// SetCloudAccountsTotal sets the per-status cloud-accounts gauge. Called
+// from a periodic refresh loop in argosd that recomputes the totals from
+// the store.
+func SetCloudAccountsTotal(status string, n int) {
+	cloudAccountsTotal.WithLabelValues(status).Set(float64(n))
+}
+
+// SetCloudAccountsPending sets the pending_credentials shorthand gauge.
+func SetCloudAccountsPending(n int) {
+	cloudAccountsPending.Set(float64(n))
+}
+
+// SetVirtualMachinesTotal sets the per-account VM count gauge.
+// terminated is "true" / "false" string for label stability.
+func SetVirtualMachinesTotal(cloudAccount, terminated string, n int) {
+	virtualMachinesTotal.WithLabelValues(cloudAccount, terminated).Set(float64(n))
+}
+
+// ObserveCredentialsRead increments the per-account credentials-fetch
+// counter. Called from HandleCollectorGetCredentialsBy{Name,ID} on a
+// successful 200 response.
+func ObserveCredentialsRead(cloudAccount string) {
+	credentialsReads.WithLabelValues(cloudAccount).Inc()
 }
 
 // Handler returns the /metrics HTTP handler.

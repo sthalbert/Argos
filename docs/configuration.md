@@ -97,6 +97,30 @@ The MCP (Model Context Protocol) server is disabled by default. It exposes read-
 | `ARGOS_MCP_ADDR` | no | `:3001` | Listen address for the SSE transport. Ignored when transport is `stdio`. |
 | `ARGOS_MCP_TOKEN` | no | -- | Bearer token required for MCP requests. When unset, the MCP server inherits the standard argosd bearer token authentication. |
 
+### Secrets master key
+
+When you catalogue cloud accounts (ADR-0015), the cloud-provider Secret Keys are encrypted at rest with AES-256-GCM under a master key supplied via env var. See [Cloud accounts — master-key backup](cloud-accounts.md#master-key-backup) for the full operational guide.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ARGOS_SECRETS_MASTER_KEY` | when cloud accounts have credentials | -- | Base64-encoded 32-byte AES-256 master key. argosd refuses to start if any `cloud_accounts` row has a non-NULL `secret_key_encrypted` and this variable is unset or malformed. Lengths other than 32 bytes (after base64 decode) are rejected at startup. |
+
+**Generate a key:**
+
+```sh
+openssl rand -base64 32
+```
+
+**Verify the right key is loaded.** On startup, argosd logs a master-key fingerprint (first 8 hex chars of the SHA-256 of the key):
+
+```
+INFO secrets master key loaded fingerprint=3f9c1e7a
+```
+
+The key itself is never logged, never returned by any endpoint, and never surfaced in the UI.
+
+> **Critical:** losing this key means every encrypted Secret Key in the database becomes unrecoverable. Argosd will start, but every vm-collector tick will fail until an admin re-enters every Secret Key by hand. Treat the master key with the same care as a database backup encryption key — back it up to your vault separately from the database itself. See [the recovery procedure](cloud-accounts.md#recover-from-master-key-loss).
+
 ### Security
 
 The following security features are built-in and require no configuration:
@@ -161,3 +185,41 @@ The collector honors the standard Go proxy environment variables:
 | `HTTPS_PROXY` | no | -- | Forward proxy URL for HTTPS traffic. |
 | `HTTP_PROXY` | no | -- | Forward proxy URL for HTTP traffic. |
 | `NO_PROXY` | no | -- | Comma-separated list of hosts/CIDRs to bypass the proxy. |
+
+---
+
+## argos-vm-collector
+
+The standalone push-mode collector for non-Kubernetes platform VMs (ADR-0015). Polls a cloud provider's API, deduplicates against the kube-node inventory, and pushes the rest to argosd over HTTPS. See the [vm-collector operator guide](vm-collector.md) for deployment recipes and the [cloud accounts admin guide](cloud-accounts.md) for credential management.
+
+### Connection
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ARGOS_SERVER_URL` | yes | -- | argosd base URL. Supports a path prefix for gateway deployments. |
+| `ARGOS_API_TOKEN` | yes | -- | Bearer PAT with the `vm-collector` scope, bound to the target cloud account at issuance. |
+
+### Cloud account identity
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ARGOS_VM_COLLECTOR_PROVIDER` | no | `outscale` | Cloud provider. Only `outscale` is supported in v1. |
+| `ARGOS_VM_COLLECTOR_ACCOUNT_NAME` | yes | -- | Cloud account name. Must match `cloud_accounts.name` in argosd. The collector self-registers a placeholder if the account does not exist. |
+| `ARGOS_VM_COLLECTOR_REGION` | yes | -- | Cloud region (e.g. `eu-west-2`). |
+| `ARGOS_VM_COLLECTOR_PROVIDER_ENDPOINT_URL` | no | provider default | Override the cloud-provider API endpoint. Useful for sovereign-cloud regions or in-network mirrors. |
+
+### Behaviour
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ARGOS_VM_COLLECTOR_INTERVAL` | no | `5m` | Time between polling ticks. |
+| `ARGOS_VM_COLLECTOR_FETCH_TIMEOUT` | no | `30s` | Per-tick timeout for cloud-provider API calls. |
+| `ARGOS_VM_COLLECTOR_RECONCILE` | no | `true` | Soft-delete VMs that disappeared after each tick. |
+| `ARGOS_VM_COLLECTOR_CREDENTIAL_REFRESH` | no | `1h` | How often to re-fetch AK/SK from argosd. |
+| `ARGOS_VM_COLLECTOR_METRICS_ADDR` | no | `127.0.0.1:9090` | Listen address for the `/metrics` endpoint. **Set to `0.0.0.0:9090` when running in Kubernetes** so the kubelet can reach the liveness probe. |
+
+### TLS, gateway, and proxy
+
+The collector uses the same TLS / gateway / proxy variables as the kube push collector — see [`argos-collector` → TLS and gateway](#tls-and-gateway) and [`argos-collector` → Proxy](#proxy). Variables: `ARGOS_CA_CERT`, `ARGOS_CLIENT_CERT`, `ARGOS_CLIENT_KEY`, `ARGOS_EXTRA_HEADERS`, `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`.
+
+> **No AK/SK env var.** Cloud-provider credentials live exclusively in argosd's `cloud_accounts` table and are fetched at runtime over HTTPS. This is deliberate — see [ADR-0015 §4](adr/adr-0015-vm-collector-for-non-kubernetes-platform-vms.md).

@@ -147,6 +147,34 @@ export function EolIcon(props: IconProps) {
   );
 }
 
+// VirtualMachineIcon — server / tower glyph: stacked rack units with a
+// status LED, distinct from NodeIcon (which depicts a horizontal blade).
+export function VirtualMachineIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x={5} y={3} width={14} height={18} rx={1.5} />
+      <line x1={5} y1={9} x2={19} y2={9} />
+      <line x1={5} y1={15} x2={19} y2={15} />
+      <circle cx={8} cy={6} r={0.6} fill="currentColor" />
+      <line x1={11} y1={6} x2={16} y2={6} />
+      <circle cx={8} cy={12} r={0.6} fill="currentColor" />
+      <line x1={11} y1={12} x2={16} y2={12} />
+      <circle cx={8} cy={18} r={0.6} fill="currentColor" />
+      <line x1={11} y1={18} x2={16} y2={18} />
+    </Svg>
+  );
+}
+
+// CloudAccountIcon — admin-tab glyph for cloud-provider account rows.
+export function CloudAccountIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M7 16 a4 4 0 0 1 0.5 -7.95 a5 5 0 0 1 9.5 1.5 a3.5 3.5 0 0 1 -0.5 6.95 z" />
+      <line x1={9} y1={13} x2={15} y2={13} />
+    </Svg>
+  );
+}
+
 export function AdminIcon(props: IconProps) {
   return (
     <Svg {...props}>
@@ -167,6 +195,8 @@ const ENTITY_ICONS: Record<string, React.FC<IconProps>> = {
   ingress: IngressIcon,
   persistentvolume: VolumeIcon,
   persistentvolumeclaim: VolumeIcon,
+  virtual_machine: VirtualMachineIcon,
+  cloud_account: CloudAccountIcon,
 };
 
 export function EntityIcon({ type, ...props }: IconProps & { type: string }) {

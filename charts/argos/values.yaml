@@ -25,6 +25,22 @@ argosd:
   # -- Session cookie Secure flag: auto | always | never.
   sessionSecureCookie: "auto"
 
+# -- Secret-encryption master key for cloud-account credentials (ADR-0015).
+# Required when the VM collector is in use; safe to leave empty otherwise.
+# The key is a base64-encoded 32-byte AES-256 master key used to envelope-
+# encrypt cloud-provider AK/SK at rest. Generate with:
+#   openssl rand -base64 32
+#
+# IMPORTANT: back this key up separately from the database. Loss of the key
+# means every stored cloud-account SK becomes unrecoverable.
+secrets:
+  # -- Inline base64 master key. Mutually exclusive with existingSecret.
+  masterKey: ""
+  # -- Reference an existing Secret carrying the key under
+  #    `ARGOS_SECRETS_MASTER_KEY`. Use this in production to keep the key
+  #    out of values.yaml / GitOps repos.
+  existingSecret: ""
+
 # -- Pull-mode collector (embedded in argosd).
 collector:
   # -- Enable the Kubernetes polling collector.

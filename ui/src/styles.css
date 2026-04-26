@@ -170,6 +170,19 @@ a:hover {
   background: var(--border);
   margin: 0.5rem 0.75rem;
 }
+.sidebar-section-label {
+  display: block;
+  padding: 0.6rem 0.75rem 0.25rem;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  user-select: none;
+}
+.sidebar-collapsed .sidebar-section-label {
+  display: none;
+}
 
 /* --- Top header bar ------------------------------------------------------ */
 .app-main {
@@ -829,6 +842,110 @@ th.sortable:hover {
   padding: 0;
   font-size: inherit;
   text-decoration: underline;
+}
+
+/* --- Virtual machines (ADR-0015) ---------------------------------------- */
+.vm-banner {
+  background: var(--bad-bg);
+  border: 1px solid var(--bad-border);
+  border-left: var(--stroke-accent) solid var(--bad-fg);
+  color: var(--bad-fg);
+  padding: 0.65rem 1rem;
+  border-radius: var(--radius-md);
+  margin: 0 0 1rem;
+  font-size: var(--fs-base);
+}
+.vm-banner strong {
+  color: var(--bad-fg);
+}
+.vm-banner a,
+.vm-banner .link-btn {
+  color: var(--bad-fg);
+  text-decoration: underline;
+}
+
+.vm-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  align-items: end;
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.vm-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: var(--fs-sm);
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--ls-label);
+  min-width: 140px;
+}
+.vm-filters label input[type='text'],
+.vm-filters label select {
+  padding: 0.4rem 0.55rem;
+  background: var(--bg-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--fg-1);
+  font-family: inherit;
+  font-size: var(--fs-base);
+  text-transform: none;
+  letter-spacing: normal;
+}
+.vm-filters label input[type='text']:focus,
+.vm-filters label select:focus {
+  outline: none;
+  border-color: var(--accent-dim);
+}
+.vm-filter-checkbox {
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 0.4rem !important;
+  text-transform: none !important;
+  letter-spacing: normal !important;
+  color: var(--fg-2) !important;
+  font-size: var(--fs-base) !important;
+}
+
+.vm-row-terminated td {
+  opacity: 0.55;
+}
+.vm-row-terminated td:first-child {
+  border-left: 2px solid var(--bad-border);
+}
+
+.vm-subsection {
+  margin: 0.5rem 0 1rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.vm-subsection > summary {
+  cursor: pointer;
+  font-size: var(--fs-base);
+  color: var(--fg-2);
+  font-weight: var(--fw-semi);
+  padding: 0.25rem 0;
+}
+.vm-subsection > summary:hover {
+  color: var(--accent);
+}
+.vm-subsection table.entities {
+  margin-top: 0.5rem;
+}
+
+.vm-terminated-ts {
+  color: var(--bad-fg);
+  font-weight: var(--fw-semi);
+}
+.vm-last-error {
+  color: var(--warn-fg);
 }
 
 /* --- Impact Graph -------------------------------------------------------- */

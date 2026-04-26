@@ -3,12 +3,13 @@ BIN_DIR := bin
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -ldflags "-X main.version=$(VERSION)"
 
-COLLECTOR_BINARY := argos-collector
+COLLECTOR_BINARY    := argos-collector
+VM_COLLECTOR_BINARY := argos-vm-collector
 
 IMAGE_NAME ?= argos
 IMAGE_TAG  ?= dev
 
-.PHONY: all build build-noui build-collector generate test test-one vet lint fmt tidy check clean docker-build docker-build-collector ui-install ui-build ui-dev ui-check
+.PHONY: all build build-noui build-collector build-vm-collector generate test test-one vet lint fmt tidy check clean docker-build docker-build-collector docker-build-vm-collector ui-install ui-build ui-dev ui-check
 
 all: build
 
@@ -25,6 +26,11 @@ build-noui:
 # Compile the push-mode collector binary (ADR-0009). No UI, no DB dependency.
 build-collector:
 	go build $(LDFLAGS) -o $(BIN_DIR)/$(COLLECTOR_BINARY) ./cmd/$(COLLECTOR_BINARY)
+
+# Compile the VM collector binary (ADR-0015). Pulls cloud-provider VMs and
+# pushes to argosd over HTTPS. No UI, no DB dependency.
+build-vm-collector:
+	go build $(LDFLAGS) -o $(BIN_DIR)/$(VM_COLLECTOR_BINARY) ./cmd/$(VM_COLLECTOR_BINARY)
 
 ui-install:
 	cd ui && npm ci
@@ -52,6 +58,13 @@ docker-build-collector:
 		--build-arg VERSION=$(VERSION) \
 		-f Dockerfile.collector \
 		-t $(IMAGE_NAME)-collector:$(IMAGE_TAG) \
+		.
+
+docker-build-vm-collector:
+	docker build \
+		--build-arg VERSION=$(VERSION) \
+		-f Dockerfile.vm-collector \
+		-t $(IMAGE_NAME)-vm-collector:$(IMAGE_TAG) \
 		.
 
 test:

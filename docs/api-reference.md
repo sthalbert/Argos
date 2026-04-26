@@ -476,6 +476,244 @@ For the full schema (request/response bodies, field types, constraints), see the
 
 ---
 
+## Cloud accounts and virtual machines (ADR-0015)
+
+[ADR-0015](adr/adr-0015-vm-collector-for-non-kubernetes-platform-vms.md) introduces non-Kubernetes platform VMs as a first-class entity. Cloud accounts hold the AK/SK that lets a [vm-collector](vm-collector.md) list its VMs; virtual machines are the inventory rows produced by the collector.
+
+Two new path families and one new scope are involved:
+
+- `/v1/admin/cloud-accounts/*` — admin-only management of cloud accounts and their credentials.
+- `/v1/cloud-accounts/*` — narrow `vm-collector` scope used by the collector binary at runtime.
+- `/v1/virtual-machines/*` — read/write VM inventory (mostly read for humans, write for the collector).
+
+### Cloud accounts
+
+| Method | Path | Scope | Notes |
+|--------|------|-------|-------|
+| GET | `/v1/admin/cloud-accounts` | `admin` | List paginated. |
+| POST | `/v1/admin/cloud-accounts` | `admin` | Create / pre-register. |
+| GET | `/v1/admin/cloud-accounts/{id}` | `admin` | SK never returned. |
+| PATCH | `/v1/admin/cloud-accounts/{id}` | `admin` | Curated metadata + name. |
+| PATCH | `/v1/admin/cloud-accounts/{id}/credentials` | `admin` | Set / rotate AK/SK. |
+| POST | `/v1/admin/cloud-accounts/{id}/disable` | `admin` | |
+| POST | `/v1/admin/cloud-accounts/{id}/enable` | `admin` | |
+| DELETE | `/v1/admin/cloud-accounts/{id}` | `admin` | Cascades to VMs + tokens. |
+| POST | `/v1/admin/cloud-accounts/{id}/tokens` | `admin` | Mint a `vm-collector` PAT bound to this account. |
+| POST | `/v1/cloud-accounts` | `vm-collector` | Idempotent first-contact registration. |
+| PATCH | `/v1/cloud-accounts/{id}/status` | `vm-collector` | Heartbeat-only (`last_seen_at`, `last_error`). |
+| GET | `/v1/cloud-accounts/by-name/{name}/credentials` | `vm-collector` | Plaintext AK/SK over TLS. |
+| GET | `/v1/cloud-accounts/{id}/credentials` | `vm-collector` | Same, by id. |
+
+**Create a cloud account (admin):**
+
+```bash
+curl -sS -b /tmp/argos.cookies -X POST \
+  https://argos.internal:8080/v1/admin/cloud-accounts \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "provider": "outscale",
+    "name": "numspot-prod",
+    "region": "eu-west-2",
+    "access_key": "AKIA...",
+    "secret_key": "wJalrXUt..."
+  }'
+```
+
+Response (SK never returned):
+
+```json
+{
+  "id": "1f2c4a3e-...",
+  "provider": "outscale",
+  "name": "numspot-prod",
+  "region": "eu-west-2",
+  "status": "active",
+  "access_key": "AKIA...",
+  "created_at": "2026-04-26T09:12:00Z",
+  "updated_at": "2026-04-26T09:12:00Z"
+}
+```
+
+If `access_key` and `secret_key` are omitted, the row is created in `status: pending_credentials` and a later `PATCH /credentials` is required.
+
+**Set or rotate credentials (admin):**
+
+```bash
+curl -sS -b /tmp/argos.cookies -X PATCH \
+  https://argos.internal:8080/v1/admin/cloud-accounts/<id>/credentials \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "access_key": "AKIA...",
+    "secret_key": "wJalrXUt..."
+  }'
+# 204 No Content
+```
+
+The SK is encrypted with AES-256-GCM under `ARGOS_SECRETS_MASTER_KEY` before it touches the database.
+
+**Mint a collector token (admin):**
+
+```bash
+curl -sS -b /tmp/argos.cookies -X POST \
+  https://argos.internal:8080/v1/admin/cloud-accounts/<id>/tokens \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "numspot-prod-collector"}'
+```
+
+Response (token shown **once**):
+
+```json
+{
+  "id": "8a3b...",
+  "name": "numspot-prod-collector",
+  "role": "vm-collector",
+  "bound_cloud_account_id": "1f2c4a3e-...",
+  "token": "argos_pat_3f9c1e7a_5N2pKdQ...",
+  "created_at": "2026-04-26T09:30:00Z"
+}
+```
+
+The PAT is bound to this `cloud_account_id` at issuance — it can only access this account's credentials and VMs.
+
+**Fetch credentials (vm-collector):**
+
+```bash
+curl -sS -H "Authorization: Bearer argos_pat_3f9c1e7a_..." \
+  https://argos.internal:8080/v1/cloud-accounts/by-name/numspot-prod/credentials
+```
+
+```json
+{
+  "access_key": "AKIA...",
+  "secret_key": "wJalrXUt...",
+  "region": "eu-west-2",
+  "provider": "outscale"
+}
+```
+
+Returned over TLS only. Audit-logged on every call (caller, account name, timestamp). Returns `404` if the account does not exist; `404` with `{"error":"cloud_account_not_registered"}` if it exists but is `pending_credentials`; `403` if it is `disabled`. The response body is **never** logged.
+
+**First-contact registration (vm-collector):**
+
+```bash
+curl -sS -H "Authorization: Bearer argos_pat_3f9c1e7a_..." \
+  -X POST https://argos.internal:8080/v1/cloud-accounts \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "provider": "outscale",
+    "name": "numspot-prod",
+    "region": "eu-west-2"
+  }'
+```
+
+Idempotent on `(provider, name)`. Returns the row with `status: pending_credentials`.
+
+**Heartbeat (vm-collector):**
+
+```bash
+curl -sS -H "Authorization: Bearer argos_pat_3f9c1e7a_..." \
+  -X PATCH https://argos.internal:8080/v1/cloud-accounts/<id>/status \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "last_seen_at": "2026-04-26T10:00:00Z",
+    "status": "active"
+  }'
+```
+
+Status may transition between `active` and `error` only; the collector cannot disable, enable, or delete its own row.
+
+### Virtual machines
+
+| Method | Path | Scope | Notes |
+|--------|------|-------|-------|
+| POST | `/v1/virtual-machines` | `vm-collector` | 409 if already a kube node. |
+| POST | `/v1/virtual-machines/reconcile` | `vm-collector` | Soft-delete tombstones. |
+| GET | `/v1/virtual-machines` | `read` | Paginated, filters. |
+| GET | `/v1/virtual-machines/{id}` | `read` | |
+| PATCH | `/v1/virtual-machines/{id}` | `write` | Curated metadata only. |
+| DELETE | `/v1/virtual-machines/{id}` | `delete` | Soft-delete. |
+
+**List VMs:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `cloud_account_id` | UUID | Scope to a single account. |
+| `region` | string | Exact match. |
+| `role` | string | Exact match (e.g. `bastion`, `vault`). |
+| `power_state` | string | One of `running`, `stopped`, `terminated`, etc. |
+| `include_terminated` | bool | Default `false` (tombstones hidden). |
+
+```bash
+curl -sS -H "Authorization: Bearer $TOKEN" \
+  'https://argos.internal:8080/v1/virtual-machines?cloud_account_id=<uuid>&power_state=running'
+```
+
+**Upsert a VM (vm-collector):**
+
+```bash
+curl -sS -H "Authorization: Bearer argos_pat_3f9c1e7a_..." \
+  -X POST https://argos.internal:8080/v1/virtual-machines \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "cloud_account_id": "<uuid>",
+    "provider_vm_id": "i-96fff41b",
+    "name": "vault-01",
+    "role": "vault",
+    "private_ip": "10.0.1.5",
+    "instance_type": "tinav7.c4r8p2",
+    "zone": "eu-west-2b",
+    "region": "eu-west-2",
+    "power_state": "running"
+  }'
+```
+
+If `provider_vm_id` matches a substring of any existing `nodes.provider_id` (i.e. it is already inventoried as a kube node), argosd returns:
+
+```
+409 Conflict
+{"error":"already_inventoried_as_kubernetes_node","node_id":"<uuid>"}
+```
+
+The collector logs and skips. This is the canonical dedup; the collector's tag-based pre-filter is just optimisation.
+
+**Reconcile (vm-collector):**
+
+```bash
+curl -sS -H "Authorization: Bearer argos_pat_3f9c1e7a_..." \
+  -X POST https://argos.internal:8080/v1/virtual-machines/reconcile \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "cloud_account_id": "<uuid>",
+    "keep_provider_vm_ids": ["i-96fff41b", "i-aabbccdd"]
+  }'
+```
+
+Response:
+
+```json
+{"tombstoned": 3}
+```
+
+Rows whose `provider_vm_id` is not in the keep list (and which are not already terminated) get `terminated_at = NOW()`, `power_state = 'terminated'`, `ready = false`. **Soft-delete only** — rows are never hard-deleted by reconciliation, preserving SecNumCloud audit history.
+
+**Edit curated metadata:**
+
+```bash
+curl -sS -H "Authorization: Bearer $TOKEN" -X PATCH \
+  https://argos.internal:8080/v1/virtual-machines/<id> \
+  -H 'Content-Type: application/merge-patch+json' \
+  -d '{
+    "display_name": "Vault Primary",
+    "owner": "platform-team",
+    "criticality": "critical",
+    "runbook_url": "https://wiki.example.com/runbooks/vault"
+  }'
+```
+
+Only curated fields (`display_name`, `owner`, `criticality`, `notes`, `runbook_url`, `annotations`) are accepted. Provider-sourced fields (`provider_vm_id`, `private_ip`, `instance_type`, etc.) cannot be patched — they are owned by the collector.
+
+---
+
 ## MCP server (alternative query interface)
 
 Argos also exposes a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server with 17 read-only tools that mirror the REST query surface. The MCP interface is designed for AI agents and supports SSE and stdio transports. It is **not** part of the REST API -- see [MCP Server](mcp-server.md) for setup, tool catalogue, and authentication details.

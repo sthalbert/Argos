@@ -186,6 +186,30 @@ export function revokeApiToken(id: string) {
   return request<void>(`/v1/admin/tokens/${id}`, { method: 'DELETE' });
 }
 
+// VM-collector PATs are bound to a specific cloud_account at issue time
+// (ADR-0015 §5). The endpoint is hand-written and lives outside the
+// OpenAPI-generated `/v1/admin/tokens` route.
+export interface CloudAccountTokenMint {
+  id: string;
+  name: string;
+  prefix: string;
+  scopes: string[];
+  bound_cloud_account_id: string;
+  created_by_user_id: string;
+  created_at: string;
+  expires_at?: string | null;
+  token: string;
+}
+export function createCloudAccountToken(
+  cloudAccountId: string,
+  in_: { name: string; expires_at?: string | null },
+) {
+  return request<CloudAccountTokenMint>(
+    `/v1/admin/cloud-accounts/${cloudAccountId}/tokens`,
+    { method: 'POST', body: JSON.stringify(in_) },
+  );
+}
+
 export interface Session {
   id: string; // server returns a masked "<first8>…" value, never the full cookie value
   user_id: string;
@@ -719,4 +743,228 @@ export function getImpactGraph(
   return request<ImpactGraph>(
     `/v1/impact/${entityType}/${id}` + query({ depth }),
   );
+}
+
+// --- Cloud accounts (ADR-0015) ------------------------------------------
+
+// CloudAccountStatus — must match the CHECK constraint on cloud_accounts.
+export type CloudAccountStatus =
+  | 'pending_credentials'
+  | 'active'
+  | 'error'
+  | 'disabled';
+
+export interface CloudAccount {
+  id: string;
+  provider: string;
+  name: string;
+  region: string;
+  status: CloudAccountStatus;
+  access_key?: string | null;
+  last_seen_at?: string | null;
+  last_error?: string | null;
+  last_error_at?: string | null;
+  owner?: string | null;
+  criticality?: string | null;
+  notes?: string | null;
+  runbook_url?: string | null;
+  annotations?: Record<string, string> | null;
+  created_at: string;
+  updated_at: string;
+  disabled_at?: string | null;
+}
+
+export interface CloudAccountCreate {
+  provider: string;
+  name: string;
+  region: string;
+  access_key?: string;
+  secret_key?: string;
+  owner?: string | null;
+  criticality?: string | null;
+  notes?: string | null;
+  runbook_url?: string | null;
+}
+
+export interface CloudAccountPatch {
+  name?: string | null;
+  region?: string | null;
+  owner?: string | null;
+  criticality?: string | null;
+  notes?: string | null;
+  runbook_url?: string | null;
+  annotations?: Record<string, string> | null;
+}
+
+export interface CloudAccountCredentials {
+  access_key: string;
+  secret_key: string;
+}
+
+export function listCloudAccounts() {
+  return request<PagedResponse<CloudAccount>>('/v1/admin/cloud-accounts?limit=200');
+}
+export function getCloudAccount(id: string) {
+  return request<CloudAccount>(`/v1/admin/cloud-accounts/${id}`);
+}
+export function createCloudAccount(in_: CloudAccountCreate) {
+  return request<CloudAccount>('/v1/admin/cloud-accounts', {
+    method: 'POST',
+    body: JSON.stringify(in_),
+  });
+}
+export function updateCloudAccount(id: string, patch: CloudAccountPatch) {
+  return request<CloudAccount>(`/v1/admin/cloud-accounts/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+export function setCloudAccountCredentials(id: string, creds: CloudAccountCredentials) {
+  return request<CloudAccount>(`/v1/admin/cloud-accounts/${id}/credentials`, {
+    method: 'PATCH',
+    body: JSON.stringify(creds),
+  });
+}
+export function disableCloudAccount(id: string) {
+  return request<void>(`/v1/admin/cloud-accounts/${id}/disable`, { method: 'POST' });
+}
+export function enableCloudAccount(id: string) {
+  return request<void>(`/v1/admin/cloud-accounts/${id}/enable`, { method: 'POST' });
+}
+export function deleteCloudAccount(id: string) {
+  return request<void>(`/v1/admin/cloud-accounts/${id}`, { method: 'DELETE' });
+}
+
+// --- Virtual machines (ADR-0015) ----------------------------------------
+
+// PowerState values reported by providers. The DB has no CHECK constraint,
+// these are just the canonical names we render in the UI.
+export type VMPowerState =
+  | 'running'
+  | 'stopped'
+  | 'stopping'
+  | 'pending'
+  | 'shutting_down'
+  | 'terminated'
+  | 'error'
+  | 'unknown'
+  | string;
+
+export interface VMNic {
+  id?: string;
+  device_index?: number;
+  mac_address?: string;
+  private_ip?: string;
+  public_ip?: string;
+  subnet_id?: string;
+  vpc_id?: string;
+  security_group_ids?: string[];
+}
+
+export interface VMSecurityGroup {
+  id?: string;
+  name?: string;
+}
+
+export interface VMBlockDevice {
+  device_name?: string;
+  volume_id?: string;
+  volume_type?: string;
+  size_gib?: number;
+  delete_on_termination?: boolean;
+  iops?: number;
+}
+
+export interface VirtualMachine {
+  id: string;
+  cloud_account_id: string;
+  provider_vm_id: string;
+  name: string;
+  display_name?: string | null;
+  role?: string | null;
+  private_ip?: string | null;
+  public_ip?: string | null;
+  private_dns_name?: string | null;
+  vpc_id?: string | null;
+  subnet_id?: string | null;
+  // The backend serialises the columns as raw JSON; render-time we cast to
+  // the structured shapes above. They're optional because providers vary.
+  nics?: VMNic[] | null;
+  security_groups?: VMSecurityGroup[] | null;
+  instance_type?: string | null;
+  architecture?: string | null;
+  zone?: string | null;
+  region?: string | null;
+  image_id?: string | null;
+  keypair_name?: string | null;
+  boot_mode?: string | null;
+  provider_account_id?: string | null;
+  provider_creation_date?: string | null;
+  power_state: VMPowerState;
+  state_reason?: string | null;
+  ready: boolean;
+  deletion_protection: boolean;
+  kernel_version?: string | null;
+  operating_system?: string | null;
+  capacity_cpu?: string | null;
+  capacity_memory?: string | null;
+  block_devices?: VMBlockDevice[] | null;
+  root_device_type?: string | null;
+  root_device_name?: string | null;
+  tags?: Record<string, string> | null;
+  labels?: Record<string, string> | null;
+  annotations?: Record<string, string> | null;
+  owner?: string | null;
+  criticality?: string | null;
+  notes?: string | null;
+  runbook_url?: string | null;
+  created_at: string;
+  updated_at: string;
+  last_seen_at: string;
+  terminated_at?: string | null;
+}
+
+export interface VirtualMachineListFilter {
+  cloud_account_id?: string;
+  region?: string;
+  role?: string;
+  power_state?: string;
+  include_terminated?: boolean;
+}
+
+export type VirtualMachinePatch = Partial<Pick<
+  VirtualMachine,
+  | 'display_name'
+  | 'role'
+  | 'owner'
+  | 'criticality'
+  | 'notes'
+  | 'runbook_url'
+  | 'annotations'
+>>;
+
+export function listVirtualMachines(filter: VirtualMachineListFilter = {}) {
+  return request<PagedResponse<VirtualMachine>>(
+    '/v1/virtual-machines' +
+      query({
+        limit: 200,
+        cloud_account_id: filter.cloud_account_id,
+        region: filter.region,
+        role: filter.role,
+        power_state: filter.power_state,
+        include_terminated: filter.include_terminated ? 'true' : undefined,
+      }),
+  );
+}
+export function getVirtualMachine(id: string) {
+  return request<VirtualMachine>(`/v1/virtual-machines/${id}`);
+}
+export function updateVirtualMachine(id: string, patch: VirtualMachinePatch) {
+  return request<VirtualMachine>(`/v1/virtual-machines/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+export function deleteVirtualMachine(id: string) {
+  return request<void>(`/v1/virtual-machines/${id}`, { method: 'DELETE' });
 }

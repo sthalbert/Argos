@@ -13,6 +13,7 @@ Replaces the Kubernetes-scoped portion of [Mercator](https://github.com/dbsystel
 ## Features
 
 - **Full Kubernetes inventory** -- Clusters, Nodes, Namespaces, Workloads (Deployment / StatefulSet / DaemonSet), Pods, Services, Ingresses, PersistentVolumes, PVCs.
+- **Inventory of non-Kubernetes platform VMs** (VPN, DNS, Bastion, Vault, …) per cloud account, with encrypted-at-rest credentials and a separate push-mode collector binary (ADR-0015).
 - **Dual-mode collection** -- pull (argosd polls clusters) and push (argos-collector runs inside air-gapped clusters and pushes over HTTPS).
 - **Multi-cluster** -- one argosd catalogues N clusters in parallel, or mixed pull+push.
 - **ANSSI cartography layers** -- every kind maps to an SNC layer (ecosystem, applicative, infrastructure, etc.).
@@ -58,6 +59,8 @@ See [Getting Started](docs/getting-started.md) for the full walkthrough includin
 | [Deploy with Helm](docs/deployment/helm.md) | One-command Kubernetes install with optional bundled PostgreSQL. |
 | [Deploy with Kustomize](docs/deployment/kubernetes.md) | Production deployment with plain manifests. |
 | [Push Collector](docs/deployment/push-collector.md) | Deploy argos-collector in air-gapped clusters. |
+| [VM Collector](docs/vm-collector.md) | Deploy argos-vm-collector to inventory non-Kubernetes platform VMs. |
+| [Cloud Accounts](docs/cloud-accounts.md) | Register cloud-provider accounts, manage AK/SK rotation, master key handling. |
 | [Docker (local dev)](docs/deployment/docker.md) | Run locally with Docker. |
 | [Authentication](docs/authentication.md) | Local users, OIDC, tokens, roles, sessions. |
 | [API Reference](docs/api-reference.md) | REST endpoints with curl examples. |
@@ -69,21 +72,23 @@ See [Getting Started](docs/getting-started.md) for the full walkthrough includin
 
 ## Architecture
 
+Argos ships as **two binaries**: `argosd` (the central server with API, UI, PostgreSQL store, and the in-process pull collectors) and `argos-vm-collector` (a standalone push-mode binary that polls cloud-provider APIs for non-Kubernetes platform VMs and pushes observations to argosd). The same push-mode pattern powers `argos-collector` for air-gapped Kubernetes clusters.
+
 ```
-   Kubernetes cluster(s)              Air-gapped cluster
-          |                                   |
-          | client-go (list)                  | client-go (list)
-          v                                   v
-   ┌──────────────┐                  ┌──────────────────┐
-   │ pull collector│                  │ argos-collector   │
-   │ (goroutine/  │                  │ (push over HTTPS) │
-   │  cluster)    │                  └────────┬─────────┘
-   └──────┬───────┘                           |
-          │ direct store                      | REST API + Bearer
-          v                                   v
-   ┌──────────────┐     ┌────────────┐
-   │   argosd     │────>│ PostgreSQL │<──── REST API / SPA / Prometheus
-   │ (API + UI +  │     │ (JSONB +   │
+   Kubernetes cluster(s)        Air-gapped cluster        Cloud-provider account
+          |                            |                           |
+          | client-go (list)           | client-go (list)          | cloud SDK (list)
+          v                            v                           v
+   ┌──────────────┐            ┌──────────────────┐       ┌─────────────────────┐
+   │ pull collector│            │ argos-collector  │       │ argos-vm-collector  │
+   │ (goroutine/  │            │ (push over HTTPS)│       │ (push over HTTPS,   │
+   │  cluster)    │            └────────┬─────────┘       │  fetches AK/SK from │
+   └──────┬───────┘                     |                 │  argosd at boot)    │
+          │ direct store                | REST API +      └──────────┬──────────┘
+          v                             | Bearer                      |
+   ┌──────────────┐     ┌────────────┐  v                              | REST API +
+   │   argosd     │────>│ PostgreSQL │<──── REST API / SPA / Prometheus | Bearer (vm-collector scope)
+   │ (API + UI +  │     │ (JSONB +   │<─────────────────────────────────┘
    │  collector)  │     │  goose)    │
    └──────────────┘     └────────────┘
 ```
@@ -106,6 +111,7 @@ See [Getting Started](docs/getting-started.md) for the full walkthrough includin
 | [0012](docs/adr/adr-0012-eol-enrichment-via-endoflife-date.md) | End-of-life enrichment via endoflife.date. |
 | [0013](docs/adr/adr-0013-impact-analysis-graph.md) | Impact analysis graph for blast-radius assessment. |
 | [0014](docs/adr/adr-0014-mcp-server.md) | MCP server for AI agent access to the CMDB. |
+| [0015](docs/adr/adr-0015-vm-collector-for-non-kubernetes-platform-vms.md) | VM collector for non-Kubernetes platform infrastructure (cloud_accounts + virtual_machines + standalone collector binary). |
 
 ## Contributing
 

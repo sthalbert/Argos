@@ -489,14 +489,16 @@ const apiTokenColumns = `id, name, prefix, scopes, created_by_user_id,
 	created_at, last_used_at, expires_at, revoked_at`
 
 // CreateAPIToken inserts a new bearer token and returns the stored representation.
+// When in.BoundCloudAccountID is non-nil, the token is bound to that
+// cloud account (vm-collector preset, ADR-0015).
 //
 //nolint:gocritic // hugeParam: Store interface requires value param
 func (p *PG) CreateAPIToken(ctx context.Context, in api.APITokenInsert) (api.ApiToken, error) {
 	now := time.Now().UTC()
 	_, err := p.pool.Exec(ctx,
-		`INSERT INTO api_tokens (id, name, prefix, hash, scopes, created_by_user_id, created_at, expires_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		in.ID, in.Name, in.Prefix, in.Hash, in.Scopes, in.CreatedByUserID, now, in.ExpiresAt,
+		`INSERT INTO api_tokens (id, name, prefix, hash, scopes, created_by_user_id, created_at, expires_at, bound_cloud_account_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		in.ID, in.Name, in.Prefix, in.Hash, in.Scopes, in.CreatedByUserID, now, in.ExpiresAt, in.BoundCloudAccountID,
 	)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -507,7 +509,9 @@ func (p *PG) CreateAPIToken(ctx context.Context, in api.APITokenInsert) (api.Api
 				return api.ApiToken{}, fmt.Errorf("token prefix collision; retry: %w", api.ErrConflict)
 			}
 			if pgErr.Code == "23503" {
-				return api.ApiToken{}, fmt.Errorf("creating user does not exist: %w", api.ErrNotFound)
+				// Either the creator user is missing or the bound
+				// cloud_account_id does not exist.
+				return api.ApiToken{}, fmt.Errorf("foreign key violation on token insert: %w", api.ErrNotFound)
 			}
 		}
 		return api.ApiToken{}, fmt.Errorf("insert api token: %w", err)
@@ -530,17 +534,18 @@ func (p *PG) getAPIToken(ctx context.Context, id uuid.UUID) (api.ApiToken, error
 // GetActiveTokenByPrefix looks up a non-revoked, non-expired token by its 8-char prefix.
 func (p *PG) GetActiveTokenByPrefix(ctx context.Context, prefix string) (auth.APIToken, error) {
 	var (
-		t      auth.APIToken
-		scopes []string
+		t        auth.APIToken
+		scopes   []string
+		boundAcc *uuid.UUID
 	)
 	err := p.pool.QueryRow(ctx,
-		`SELECT id, name, hash, scopes, created_by_user_id
+		`SELECT id, name, hash, scopes, created_by_user_id, bound_cloud_account_id
 		 FROM api_tokens
 		 WHERE prefix = $1
 		   AND revoked_at IS NULL
 		   AND (expires_at IS NULL OR expires_at > NOW())`,
 		prefix,
-	).Scan(&t.ID, &t.Name, &t.Hash, &scopes, &t.CreatedByUserID)
+	).Scan(&t.ID, &t.Name, &t.Hash, &scopes, &t.CreatedByUserID, &boundAcc)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return auth.APIToken{}, auth.ErrUnauthorized
@@ -548,6 +553,7 @@ func (p *PG) GetActiveTokenByPrefix(ctx context.Context, prefix string) (auth.AP
 		return auth.APIToken{}, fmt.Errorf("select token by prefix: %w", err)
 	}
 	t.Scopes = scopes
+	t.BoundCloudAccountID = boundAcc
 	return t, nil
 }
 
