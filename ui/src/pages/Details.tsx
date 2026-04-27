@@ -20,6 +20,7 @@ import { ClusterCuratedCard } from './cluster_curated';
 import { NamespaceCuratedCard } from './namespace_curated';
 import { NodeCuratedCard } from './node_curated';
 import { ImpactSection } from './ImpactGraph';
+import { LabelsCard } from '../components/inventory/LabelsCard';
 import {
   ClusterIcon, NamespaceIcon, NodeIcon, WorkloadIcon, PodIcon, IngressIcon,
 } from '../icons';
@@ -960,8 +961,7 @@ export function NodeDetail() {
               </table>
             )}
 
-            <SectionTitle>Labels</SectionTitle>
-            <Labels labels={n.labels} />
+            <LabelsCard labels={n.labels} />
 
             <AsyncView state={pods}>
               {(p) => {

@@ -24,16 +24,21 @@ import {
   IngressDetail,
 } from './pages/Details';
 import EolDashboard from './pages/EolDashboard';
+import VirtualMachines from './pages/VirtualMachines';
+import VirtualMachineDetail from './pages/VirtualMachineDetail';
 import AdminLayout from './pages/admin/AdminLayout';
 import UsersPage from './pages/admin/Users';
 import TokensPage from './pages/admin/Tokens';
 import SessionsPage from './pages/admin/Sessions';
 import AuditPage from './pages/admin/Audit';
 import SettingsPage from './pages/admin/Settings';
+import CloudAccountsPage from './pages/admin/CloudAccounts';
+import CloudAccountDetail from './pages/admin/CloudAccountDetail';
 import { MeProvider } from './me';
 import {
   ClusterIcon, NamespaceIcon, NodeIcon, WorkloadIcon, PodIcon,
   ServiceIcon, IngressIcon, VolumeIcon, SearchIcon, EolIcon, AdminIcon,
+  VirtualMachineIcon,
 } from './icons';
 
 // --- auth gate ----------------------------------------------------------
@@ -124,6 +129,7 @@ function Chrome({ me, children }: { me: api.Me; children: React.ReactNode }) {
           </svg>
         </button>
         <nav className="sidebar-nav">
+          <span className="sidebar-section-label">Kubernetes</span>
           {link('/clusters', 'Clusters', ClusterIcon)}
           {link('/namespaces', 'Namespaces', NamespaceIcon)}
           {link('/nodes', 'Nodes', NodeIcon)}
@@ -134,10 +140,18 @@ function Chrome({ me, children }: { me: api.Me; children: React.ReactNode }) {
           {link('/persistentvolumes', 'PVs', VolumeIcon)}
           {link('/persistentvolumeclaims', 'PVCs', VolumeIcon)}
           <div className="sidebar-divider" />
+          <span className="sidebar-section-label">Cloud Infrastructure</span>
+          {link('/virtual-machines', 'Virtual Machines', VirtualMachineIcon)}
+          <div className="sidebar-divider" />
+          <span className="sidebar-section-label">Tools</span>
           {link('/search/image', 'Search', SearchIcon)}
           {link('/eol', 'EOL', EolIcon)}
-          {(me.role === 'admin' || me.role === 'auditor') &&
-            link(me.role === 'admin' ? '/admin/users' : '/admin/audit', 'Admin', AdminIcon)}
+          {(me.role === 'admin' || me.role === 'auditor') && (
+            <>
+              <div className="sidebar-divider" />
+              {link(me.role === 'admin' ? '/admin/users' : '/admin/audit', 'Admin', AdminIcon)}
+            </>
+          )}
         </nav>
       </aside>
       <div className="app-main">
@@ -218,6 +232,9 @@ export default function App() {
       <Route path="/search/image" element={authed(<ImageSearch />)} />
       <Route path="/eol" element={authed(<EolDashboard />)} />
 
+      <Route path="/virtual-machines" element={authed(<VirtualMachines />)} />
+      <Route path="/virtual-machines/:id" element={authed(<VirtualMachineDetail />)} />
+
       {/* Admin panel — admins see every tab; auditors only get Audit. */}
       <Route
         path="/admin"
@@ -236,6 +253,8 @@ export default function App() {
         <Route path="users" element={<UsersPage />} />
         <Route path="tokens" element={<TokensPage />} />
         <Route path="sessions" element={<SessionsPage />} />
+        <Route path="cloud-accounts" element={<CloudAccountsPage />} />
+        <Route path="cloud-accounts/:id" element={<CloudAccountDetail />} />
         <Route path="audit" element={<AuditPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>

@@ -6,6 +6,176 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 — the REST and database contracts may still change incompatibly before
 `v1.0.0`.
 
+## [0.10.0] — 2026-04-26
+
+Helm chart 0.12.0 / appVersion 0.10.0. Adds the VM-collector track from
+ADR-0015: Argos now inventories the non-Kubernetes platform VMs sitting
+underneath the clusters (VPN, DNS, Bastion, Vault, …) per cloud account,
+with encrypted-at-rest credentials and a separate push-mode collector
+binary.
+
+### Added
+
+- **VM collector binary `argos-vm-collector`** (ADR-0015 §1, §IMP-004) —
+  standalone push-mode binary mirroring `argos-collector`. Stateless,
+  distroless, UID 65532, env-var configured. One binary instance per
+  cloud account; multi-account = N deployments. Source under
+  `cmd/argos-vm-collector/`; reusable polling logic under
+  `internal/vmcollector/`.
+- **`cloud_accounts` table** (ADR-0015 §3) — operator-editable
+  cloud-provider accounts with status workflow
+  (`pending_credentials` → `active` → `error` / `disabled`),
+  encrypted SK column, and curated metadata. Migration
+  `00023_create_cloud_accounts.sql`.
+- **`virtual_machines` table** (ADR-0015 §2) — top-level table for
+  non-Kubernetes platform VMs. FK to `cloud_accounts(id)`
+  `ON DELETE CASCADE`. Captures the rich Outscale payload (image AMI,
+  keypair, VPC/subnet, NICs, SGs, block devices, deletion protection,
+  provider creation date) plus the curated-metadata five-tuple. Soft
+  delete via `terminated_at` so the audit history of decommissioned
+  VMs is preserved. Migration `00024_create_virtual_machines.sql`.
+- **`vm-collector` token scope** (ADR-0015 §5 / IMP-008) — narrowest
+  scope in the system. Grants exactly: fetch own credentials, register
+  placeholder cloud account, heartbeat status updates, upsert VMs,
+  reconcile VMs. PATs are bound to a single `cloud_account_id` at
+  issuance via the new `tokens.bound_cloud_account_id` column
+  (migration `00025_add_token_bound_cloud_account.sql`); enforced by
+  `auth.Caller.EnforceCloudAccountBinding`. The token-issuance UI
+  requires picking a bound cloud account when the `vm-collector`
+  preset is selected.
+- **Master-key envelope encryption** (ADR-0015 §4 / IMP-002) — new
+  package `internal/secrets/`. AES-256-GCM with the master key from
+  `ARGOS_SECRETS_MASTER_KEY` (base64-encoded 32 bytes; rejected at
+  startup on any other length). AAD bound to the row UUID so a
+  database backup-restore cannot move a ciphertext between rows.
+  Master-key fingerprint (first 8 hex chars of SHA-256) logged at
+  startup. Master key is required only when at least one
+  `cloud_accounts` row carries a non-NULL `secret_key_encrypted`.
+- **Outscale provider** (ADR-0015 §IMP-003) — first cloud-provider
+  implementation behind the new `internal/vmcollector/provider.Provider`
+  seam. Wraps `github.com/outscale/osc-sdk-go/v2`, maps `osc.Vm` into
+  the canonical `VM` struct, hardcodes `ansible_group` as the role-tag
+  key, parses TINA-family instance types into CPU/memory, normalises
+  Outscale's `shutting-down` to the AWS-spelling `terminating` so
+  `power_state` carries one vocabulary across providers.
+- **Tag-driven kube-node dedup** (ADR-0015 §8) — server-side check on
+  `POST /v1/virtual-machines`: looks up `nodes.provider_id LIKE '%' ||
+  $1 || '%'` against the posted `provider_vm_id` (Outscale CCM stamps
+  the `VmId` substring into `node.spec.providerID`). 409
+  `already_inventoried_as_kubernetes_node` on hit; the collector
+  skips. Tag-independent — works for any cloud-controller-manager.
+  Local pre-filter on `OscK8sClusterID/*` / `OscK8sNodeName=*` /
+  `argos.io/ignore=true` saves the round-trip per kube worker.
+- **New endpoints** (ADR-0015 §IMP-006):
+  - `POST /v1/admin/cloud-accounts`,
+    `GET /v1/admin/cloud-accounts`,
+    `GET /v1/admin/cloud-accounts/{id}`,
+    `PATCH /v1/admin/cloud-accounts/{id}`,
+    `PATCH /v1/admin/cloud-accounts/{id}/credentials`,
+    `POST /v1/admin/cloud-accounts/{id}/disable` and `/enable`,
+    `DELETE /v1/admin/cloud-accounts/{id}` — all admin scope.
+  - `GET /v1/cloud-accounts/by-name/{name}/credentials` and
+    `GET /v1/cloud-accounts/{id}/credentials` — `vm-collector` scope,
+    the only places plaintext SK leaves the database.
+  - `POST /v1/cloud-accounts` — `vm-collector` scope, idempotent
+    first-contact registration.
+  - `PATCH /v1/cloud-accounts/{id}/status` — `vm-collector` scope,
+    heartbeat-only.
+  - `POST /v1/virtual-machines`,
+    `POST /v1/virtual-machines/reconcile` — `vm-collector` scope.
+  - `GET /v1/virtual-machines`, `GET /v1/virtual-machines/{id}` —
+    `read` scope.
+  - `PATCH /v1/virtual-machines/{id}` — `write` scope, curated
+    metadata only.
+  - `DELETE /v1/virtual-machines/{id}` — `delete` scope, soft delete.
+- **Soft-delete reconciliation** (ADR-0015 §9) —
+  `POST /v1/virtual-machines/reconcile` flips `terminated_at = NOW()`
+  + `power_state = 'terminated'` + `ready = false` for rows whose
+  `provider_vm_id` is not in the keep list. Rows are never
+  hard-deleted by reconciliation. A reappearing
+  `(cloud_account_id, provider_vm_id)` is resurrected by clearing
+  `terminated_at`.
+- **Hybrid onboarding flow** (ADR-0015 §6) — operator deploys the
+  collector with only a PAT and an account name; the collector posts
+  a placeholder row to `POST /v1/cloud-accounts`, the admin sees a
+  red "pending credentials" banner in the UI, pastes AK/SK, the
+  collector picks them up on the next refresh tick. Hot AK/SK
+  rotation works the same way: PATCH `/credentials`, collector picks
+  up the new SK within `ARGOS_VM_COLLECTOR_CREDENTIAL_REFRESH`
+  (default 1 h).
+- **Virtual Machines and Cloud Accounts UI pages** (ADR-0015 §10) —
+  `/ui/virtual-machines` list + detail (mirrors Node detail layout
+  via cards extracted into `ui/src/components/inventory/`),
+  `/ui/admin/cloud-accounts` list with status badges and "Set
+  credentials" / "Rotate credentials" / "Disable" forms, "Issue
+  collector token" button pre-binding the new PAT to the cloud
+  account. Sidebar gains a new "Virtual Machines" entry with a
+  distinct server/tower SVG icon. Home-page admin banner surfaces
+  the count of `pending_credentials` accounts.
+- **Prometheus metrics**:
+  - argosd: `argos_cloud_accounts_total{status}`,
+    `argos_cloud_accounts_pending_credentials` (gauge for alerting),
+    `argos_virtual_machines_total{cloud_account, terminated}`,
+    `argos_credentials_reads_total{cloud_account}`.
+  - collector binary: `argos_vm_collector_ticks_total{status}`,
+    `argos_vm_collector_tick_duration_seconds`,
+    `argos_vm_collector_vms_observed`,
+    `argos_vm_collector_vms_skipped_kubernetes_total`,
+    `argos_vm_collector_credential_refreshes_total{result}`,
+    `argos_vm_collector_last_success_timestamp_seconds`,
+    `argos_vm_collector_build_info{version}`. Exposed on a private
+    registry on a localhost-only `/metrics` listener.
+
+### Changed
+
+- **`internal/auth.HasScope` no longer treats admin scope as implying
+  `vm-collector`** (ADR-0015 §5). Only collector tokens carrying the
+  scope explicitly can read plaintext SK; admin tokens can manage
+  cloud-account metadata via the admin endpoints but cannot exercise
+  the credentials-fetch endpoint. Preserves the
+  SK-is-write-only-from-admin-endpoints guarantee.
+- **Sidebar reorganised into Kubernetes / Cloud Infrastructure /
+  Tools sections** so the new Virtual Machines entry sits alongside
+  the cloud-account admin link without crowding the existing
+  Kubernetes inventory drill-down.
+- **Audit middleware now wraps the hand-written cloud-accounts and
+  VM routes** (ADR-0015 §IMP-007). These hand-written routes
+  previously bypassed `AuditMiddleware` (a security gap); they now
+  produce audit rows for every write, plus every credentials-fetch
+  GET (the response body is intentionally never logged, even at
+  debug level). The scrubber list gains `secret_key` and
+  `access_key`.
+
+### Security
+
+- **Encrypted-at-rest cloud-provider AK/SK** — secret keys live as
+  AES-256-GCM ciphertexts AAD-bound to their row UUID; database
+  backup-restore alone cannot move a ciphertext to another row.
+  Master key required only when at least one row carries a non-NULL
+  `secret_key_encrypted`; argosd refuses to start otherwise.
+- **vm-collector PATs bound to a single cloud account** — a leaked
+  collector PAT exposes exactly one account's credentials and one
+  account's VM writes. Strictly less than a `read`-scope PAT
+  (which can list every entity in the CMDB).
+- **LIKE-wildcard escaping on the dedup query** — `_` and `%` inside
+  `provider_vm_id` are escaped before interpolation into the
+  `nodes.provider_id LIKE '%' || $1 || '%'` lookup, so a maliciously
+  named VM cannot match every node row.
+
+### Upgrading
+
+Migrations `00023` / `00024` / `00025` are additive (the schema for
+new tables, plus a nullable column on `tokens`); the
+`ARGOS_AUTO_MIGRATE=true` default applies them on startup. Existing
+deployments without any `cloud_accounts` row do not need
+`ARGOS_SECRETS_MASTER_KEY`; argosd only refuses to start when the
+table contains an encrypted SK and the env var is unset.
+
+The Helm chart bumps to `0.12.0` / appVersion `0.10.0`. The new
+`secrets.masterKey` value (delivered via a Kubernetes Secret, never
+in `values.yaml`) is required only if you intend to register a cloud
+account.
+
 ## [0.7.0] — 2026-04-24
 
 ### Added

@@ -1,0 +1,45 @@
+# syntax=docker/dockerfile:1.7
+#
+# argos-vm-collector container image (ADR-0015).
+# Two-stage: golang builder -> distroless static runtime. No UI stage needed.
+# Binary is static (CGO_ENABLED=0) and runs as non-root UID 65532.
+
+ARG GO_VERSION=1.26
+
+FROM golang:${GO_VERSION} AS build
+
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go mod download
+
+COPY . .
+
+ARG VERSION=docker
+ARG TARGETOS
+ARG TARGETARCH
+
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 \
+    GOOS=${TARGETOS:-linux} \
+    GOARCH=${TARGETARCH:-amd64} \
+    go build \
+        -trimpath \
+        -ldflags "-s -w -X main.version=${VERSION}" \
+        -o /out/argos-vm-collector \
+        ./cmd/argos-vm-collector
+
+FROM gcr.io/distroless/static-debian12:nonroot
+
+COPY --from=build /out/argos-vm-collector /argos-vm-collector
+
+USER nonroot:nonroot
+
+# Localhost metrics listener — Prometheus scrape via sidecar or
+# kubectl port-forward. Default ARGOS_VM_COLLECTOR_METRICS_ADDR=127.0.0.1:9090.
+EXPOSE 9090
+
+ENTRYPOINT ["/argos-vm-collector"]

@@ -50,16 +50,17 @@ type memSession struct {
 }
 
 type memToken struct {
-	id         uuid.UUID
-	name       string
-	prefix     string
-	hash       string
-	scopes     []string
-	createdBy  uuid.UUID
-	createdAt  time.Time
-	lastUsedAt *time.Time
-	expiresAt  *time.Time
-	revokedAt  *time.Time
+	id                  uuid.UUID
+	name                string
+	prefix              string
+	hash                string
+	scopes              []string
+	createdBy           uuid.UUID
+	createdAt           time.Time
+	lastUsedAt          *time.Time
+	expiresAt           *time.Time
+	revokedAt           *time.Time
+	boundCloudAccountID *uuid.UUID
 }
 
 func newMemAuthState() memAuthState {
@@ -392,14 +393,15 @@ func (m *memStore) CreateAPIToken(_ context.Context, in APITokenInsert) (ApiToke
 	}
 	now := time.Now().UTC()
 	t := memToken{
-		id:        in.ID,
-		name:      in.Name,
-		prefix:    in.Prefix,
-		hash:      in.Hash,
-		scopes:    append([]string(nil), in.Scopes...),
-		createdBy: in.CreatedByUserID,
-		createdAt: now,
-		expiresAt: in.ExpiresAt,
+		id:                  in.ID,
+		name:                in.Name,
+		prefix:              in.Prefix,
+		hash:                in.Hash,
+		scopes:              append([]string(nil), in.Scopes...),
+		createdBy:           in.CreatedByUserID,
+		createdAt:           now,
+		expiresAt:           in.ExpiresAt,
+		boundCloudAccountID: in.BoundCloudAccountID,
 	}
 	m.authState.tokens[in.ID] = t
 	m.authState.tokenByPrefix[in.Prefix] = in.ID
@@ -440,11 +442,12 @@ func (m *memStore) GetActiveTokenByPrefix(_ context.Context, prefix string) (aut
 		return auth.APIToken{}, auth.ErrUnauthorized
 	}
 	return auth.APIToken{
-		ID:              t.id,
-		Name:            t.name,
-		Hash:            t.hash,
-		Scopes:          append([]string(nil), t.scopes...),
-		CreatedByUserID: t.createdBy,
+		ID:                  t.id,
+		Name:                t.name,
+		Hash:                t.hash,
+		Scopes:              append([]string(nil), t.scopes...),
+		CreatedByUserID:     t.createdBy,
+		BoundCloudAccountID: t.boundCloudAccountID,
 	}, nil
 }
 

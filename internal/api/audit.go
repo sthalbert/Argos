@@ -113,14 +113,22 @@ func AuditMiddleware(recorder AuditRecorder) MiddlewareFunc {
 }
 
 // shouldAudit is the allow-list. Writes of any kind are audited; reads
-// are audited only when they hit /v1/admin/*. /healthz, /readyz,
+// are audited only when they hit /v1/admin/* OR a credentials-fetch
+// endpoint under /v1/cloud-accounts/.../credentials (ADR-0015 §5: every
+// plaintext SK read must produce an audit row, even though the endpoint
+// is reached by collector PATs not admins). /healthz, /readyz,
 // /metrics, /ui/*, and /v1/auth/config are chatty reads not worth
 // logging.
 func shouldAudit(r *http.Request) bool {
 	if r.Method != http.MethodGet {
 		return true
 	}
-	return strings.HasPrefix(r.URL.Path, "/v1/admin/")
+	if strings.HasPrefix(r.URL.Path, "/v1/admin/") {
+		return true
+	}
+	// /v1/cloud-accounts/<id-or-by-name/...>/credentials
+	return strings.HasPrefix(r.URL.Path, "/v1/cloud-accounts/") &&
+		strings.HasSuffix(r.URL.Path, "/credentials")
 }
 
 func buildAuditEvent(r *http.Request, status int, bodySnap []byte) AuditEventInsert {
@@ -247,6 +255,8 @@ var singularNames = map[string]string{ //nolint:gochecknoglobals // read-only lo
 	"ingresses":                "ingress",
 	"persistent-volumes":       "persistent_volume",
 	"persistent-volume-claims": "persistent_volume_claim",
+	"cloud-accounts":           "cloud_account",
+	"virtual-machines":         "virtual_machine",
 	"auth":                     "auth",
 }
 
@@ -284,6 +294,13 @@ func scrubSecrets(raw []byte) any {
 	for _, k := range []string{
 		"password", "new_password", "current_password",
 		"client_secret", "token", "code_verifier",
+		// ADR-0015: cloud-provider credentials. The credentials-fetch
+		// endpoints log only request metadata (method/path/caller); the
+		// response body — which contains plaintext SK — is intentionally
+		// NOT logged anywhere. The middleware here only ever sees request
+		// bodies, but we redact request-side `secret_key` / `access_key`
+		// defensively too because admins POST them on /credentials.
+		"secret_key", "access_key",
 	} {
 		if _, ok := obj[k]; ok {
 			obj[k] = "[redacted]"
