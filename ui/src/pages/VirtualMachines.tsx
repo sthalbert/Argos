@@ -18,7 +18,8 @@ type SortKey =
   | 'region'
   | 'zone'
   | 'instance_type'
-  | 'image'
+  | 'image_name'
+  | 'image_id'
   | 'private_ip'
   | 'power_state'
   | 'last_seen';
@@ -93,8 +94,10 @@ function compare(a: api.VirtualMachine, b: api.VirtualMachine, key: SortKey, asc
       return s(a.zone).localeCompare(s(b.zone)) * dir;
     case 'instance_type':
       return s(a.instance_type).localeCompare(s(b.instance_type)) * dir;
-    case 'image':
-      return s(a.image_name || a.image_id).localeCompare(s(b.image_name || b.image_id)) * dir;
+    case 'image_name':
+      return s(a.image_name).localeCompare(s(b.image_name)) * dir;
+    case 'image_id':
+      return s(a.image_id).localeCompare(s(b.image_id)) * dir;
     case 'private_ip':
       return s(a.private_ip).localeCompare(s(b.private_ip)) * dir;
     case 'power_state':
@@ -383,7 +386,14 @@ export default function VirtualMachines() {
                       />
                       <SortHeader
                         label="Image"
-                        sortKey="image"
+                        sortKey="image_name"
+                        currentKey={sortKey}
+                        asc={sortAsc}
+                        onClick={handleSort}
+                      />
+                      <SortHeader
+                        label="Image ID"
+                        sortKey="image_id"
                         currentKey={sortKey}
                         asc={sortAsc}
                         onClick={handleSort}
@@ -455,23 +465,8 @@ export default function VirtualMachines() {
                           <td>{vm.region ? <code>{vm.region}</code> : <Dash />}</td>
                           <td>{vm.zone ? <code>{vm.zone}</code> : <Dash />}</td>
                           <td>{vm.instance_type ? <code>{vm.instance_type}</code> : <Dash />}</td>
-                          <td>
-                            {vm.image_name || vm.image_id ? (
-                              <span>
-                                {vm.image_name && <span>{vm.image_name}</span>}
-                                {vm.image_id && (
-                                  <div
-                                    className="muted"
-                                    style={{ fontSize: 'var(--fs-sm)', marginTop: '0.1rem' }}
-                                  >
-                                    <code>{vm.image_id}</code>
-                                  </div>
-                                )}
-                              </span>
-                            ) : (
-                              <Dash />
-                            )}
-                          </td>
+                          <td>{vm.image_name ? <span>{vm.image_name}</span> : <Dash />}</td>
+                          <td>{vm.image_id ? <code>{vm.image_id}</code> : <Dash />}</td>
                           <td>
                             {vm.private_ip ? (
                               <span>
