@@ -62,12 +62,15 @@ func TestPGClusterCRUD(t *testing.T) {
 
 	name := "test-" + strconv.FormatInt(int64(uuid.New().ID()), 16)
 	env := "staging"
-	created, err := pg.CreateCluster(ctx, api.ClusterCreate{
+	created, createdNew, err := pg.EnsureCluster(ctx, api.ClusterCreate{
 		Name:        name,
 		Environment: &env,
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
+	}
+	if !createdNew {
+		t.Fatal("EnsureCluster should return created=true on first insert")
 	}
 	if created.Id == nil {
 		t.Fatal("created.Id is nil")
@@ -84,9 +87,15 @@ func TestPGClusterCRUD(t *testing.T) {
 		t.Errorf("environment = %v, want %q", got.Environment, env)
 	}
 
-	_, err = pg.CreateCluster(ctx, api.ClusterCreate{Name: name})
-	if !errors.Is(err, api.ErrConflict) {
-		t.Errorf("duplicate should be ErrConflict, got %v", err)
+	dup, dupCreated, err := pg.EnsureCluster(ctx, api.ClusterCreate{Name: name})
+	if err != nil {
+		t.Errorf("duplicate EnsureCluster should not error, got %v", err)
+	}
+	if dupCreated {
+		t.Error("duplicate EnsureCluster should return created=false")
+	}
+	if dup.Id == nil || *dup.Id != *created.Id {
+		t.Errorf("duplicate EnsureCluster returned wrong id: got %v, want %v", dup.Id, created.Id)
 	}
 
 	prov := "gke"
@@ -114,7 +123,7 @@ func TestPGNodeCRUD(t *testing.T) {
 	pg := newTestPG(t)
 	ctx := context.Background()
 
-	cluster, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: "nodes-test"})
+	cluster, _, err := pg.EnsureCluster(ctx, api.ClusterCreate{Name: "nodes-test"})
 	if err != nil {
 		t.Fatalf("create cluster: %v", err)
 	}
@@ -191,7 +200,7 @@ func TestPGUpsertNode(t *testing.T) {
 	pg := newTestPG(t)
 	ctx := context.Background()
 
-	cluster, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: "upsert-test"})
+	cluster, _, err := pg.EnsureCluster(ctx, api.ClusterCreate{Name: "upsert-test"})
 	if err != nil {
 		t.Fatalf("create cluster: %v", err)
 	}
@@ -243,7 +252,7 @@ func TestPGNamespaceCRUD(t *testing.T) {
 	pg := newTestPG(t)
 	ctx := context.Background()
 
-	cluster, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: "ns-test"})
+	cluster, _, err := pg.EnsureCluster(ctx, api.ClusterCreate{Name: "ns-test"})
 	if err != nil {
 		t.Fatalf("create cluster: %v", err)
 	}
@@ -295,7 +304,7 @@ func TestPGUpsertNamespace(t *testing.T) {
 	pg := newTestPG(t)
 	ctx := context.Background()
 
-	cluster, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: "ns-upsert"})
+	cluster, _, err := pg.EnsureCluster(ctx, api.ClusterCreate{Name: "ns-upsert"})
 	if err != nil {
 		t.Fatalf("create cluster: %v", err)
 	}
@@ -338,7 +347,7 @@ func TestPGDeleteNodesNotIn(t *testing.T) {
 	pg := newTestPG(t)
 	ctx := context.Background()
 
-	cluster, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: "reconcile-nodes"})
+	cluster, _, err := pg.EnsureCluster(ctx, api.ClusterCreate{Name: "reconcile-nodes"})
 	if err != nil {
 		t.Fatalf("cluster: %v", err)
 	}
@@ -392,7 +401,7 @@ func TestPGDeleteNamespacesNotIn(t *testing.T) {
 	pg := newTestPG(t)
 	ctx := context.Background()
 
-	cluster, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: "reconcile-ns"})
+	cluster, _, err := pg.EnsureCluster(ctx, api.ClusterCreate{Name: "reconcile-ns"})
 	if err != nil {
 		t.Fatalf("cluster: %v", err)
 	}
@@ -424,7 +433,7 @@ func TestPGPodCRUD(t *testing.T) {
 	pg := newTestPG(t)
 	ctx := context.Background()
 
-	cluster, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: "pod-test"})
+	cluster, _, err := pg.EnsureCluster(ctx, api.ClusterCreate{Name: "pod-test"})
 	if err != nil {
 		t.Fatalf("cluster: %v", err)
 	}
@@ -481,7 +490,7 @@ func TestPGUpsertPodAndDeleteNotIn(t *testing.T) {
 	pg := newTestPG(t)
 	ctx := context.Background()
 
-	cluster, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: "pod-upsert"})
+	cluster, _, err := pg.EnsureCluster(ctx, api.ClusterCreate{Name: "pod-upsert"})
 	if err != nil {
 		t.Fatalf("cluster: %v", err)
 	}
@@ -534,7 +543,7 @@ func TestPGWorkloadCRUD(t *testing.T) {
 	pg := newTestPG(t)
 	ctx := context.Background()
 
-	cluster, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: "workload-test"})
+	cluster, _, err := pg.EnsureCluster(ctx, api.ClusterCreate{Name: "workload-test"})
 	if err != nil {
 		t.Fatalf("cluster: %v", err)
 	}
@@ -609,7 +618,7 @@ func TestPGUpsertWorkloadAndReconcileByKindName(t *testing.T) {
 	pg := newTestPG(t)
 	ctx := context.Background()
 
-	cluster, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: "workload-upsert"})
+	cluster, _, err := pg.EnsureCluster(ctx, api.ClusterCreate{Name: "workload-upsert"})
 	if err != nil {
 		t.Fatalf("cluster: %v", err)
 	}
@@ -676,7 +685,7 @@ func TestPGServiceCRUD(t *testing.T) {
 	pg := newTestPG(t)
 	ctx := context.Background()
 
-	cluster, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: "service-test"})
+	cluster, _, err := pg.EnsureCluster(ctx, api.ClusterCreate{Name: "service-test"})
 	if err != nil {
 		t.Fatalf("cluster: %v", err)
 	}
@@ -730,7 +739,7 @@ func TestPGUpsertServiceAndDeleteNotIn(t *testing.T) {
 	pg := newTestPG(t)
 	ctx := context.Background()
 
-	cluster, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: "svc-upsert"})
+	cluster, _, err := pg.EnsureCluster(ctx, api.ClusterCreate{Name: "svc-upsert"})
 	if err != nil {
 		t.Fatalf("cluster: %v", err)
 	}
@@ -785,7 +794,7 @@ func TestPGPodAndWorkloadContainersRoundTrip(t *testing.T) {
 	pg := newTestPG(t)
 	ctx := context.Background()
 
-	cluster, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: "container-round-trip"})
+	cluster, _, err := pg.EnsureCluster(ctx, api.ClusterCreate{Name: "container-round-trip"})
 	if err != nil {
 		t.Fatalf("cluster: %v", err)
 	}
@@ -855,7 +864,7 @@ func TestPGPodWorkloadFK(t *testing.T) {
 	pg := newTestPG(t)
 	ctx := context.Background()
 
-	cluster, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: "pod-wl-fk"})
+	cluster, _, err := pg.EnsureCluster(ctx, api.ClusterCreate{Name: "pod-wl-fk"})
 	if err != nil {
 		t.Fatalf("cluster: %v", err)
 	}
@@ -953,7 +962,7 @@ func TestPGGetClusterByName(t *testing.T) {
 	pg := newTestPG(t)
 	ctx := context.Background()
 
-	created, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: "by-name-test"})
+	created, _, err := pg.EnsureCluster(ctx, api.ClusterCreate{Name: "by-name-test"})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -978,7 +987,7 @@ func TestPGListPagination(t *testing.T) {
 
 	for i := range 5 {
 		name := "page-" + strconv.Itoa(i)
-		if _, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: name}); err != nil {
+		if _, _, err := pg.EnsureCluster(ctx, api.ClusterCreate{Name: name}); err != nil {
 			t.Fatalf("create %s: %v", name, err)
 		}
 	}
@@ -1033,7 +1042,7 @@ func TestPGPersistentVolumeAndClaimFK(t *testing.T) {
 	pg := newTestPG(t)
 	ctx := context.Background()
 
-	cluster, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: "pv-fk"})
+	cluster, _, err := pg.EnsureCluster(ctx, api.ClusterCreate{Name: "pv-fk"})
 	if err != nil {
 		t.Fatalf("cluster: %v", err)
 	}
@@ -1156,7 +1165,7 @@ func TestPGListFiltersForImageAndNode(t *testing.T) {
 	pg := newTestPG(t)
 	ctx := context.Background()
 
-	cluster, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: "filter-test"})
+	cluster, _, err := pg.EnsureCluster(ctx, api.ClusterCreate{Name: "filter-test"})
 	if err != nil {
 		t.Fatalf("cluster: %v", err)
 	}
@@ -1409,7 +1418,7 @@ func TestPGNodeEnrichmentRoundTrip(t *testing.T) {
 	pg := newTestPG(t)
 	ctx := context.Background()
 
-	cluster, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: "node-enrich"})
+	cluster, _, err := pg.EnsureCluster(ctx, api.ClusterCreate{Name: "node-enrich"})
 	if err != nil {
 		t.Fatalf("cluster: %v", err)
 	}
@@ -1800,7 +1809,7 @@ func TestPGAuditEventsRoundTrip(t *testing.T) {
 
 // Exercises the curated-metadata columns added in migration 00018.
 // Round-trips owner / criticality / notes / runbook_url / annotations
-// through CreateCluster -> GetCluster -> UpdateCluster, and verifies
+// through EnsureCluster -> GetCluster -> UpdateCluster, and verifies
 // that a collector-style KubernetesVersion-only patch leaves those
 // columns alone (the "collector must not clobber curated fields"
 // invariant from ADR-0006).
@@ -1817,7 +1826,7 @@ func TestPGClusterCuratedMetadata(t *testing.T) {
 	runbook := "https://runbooks.example.com/prod"
 	annotations := map[string]string{"compliance": testAnnotationSNC, "dc": "paris-a"}
 
-	created, err := pg.CreateCluster(ctx, api.ClusterCreate{
+	created, _, err := pg.EnsureCluster(ctx, api.ClusterCreate{
 		Name:        name,
 		Owner:       &owner,
 		Criticality: &criticality,
@@ -1912,7 +1921,7 @@ func TestPGNamespaceCuratedMetadata(t *testing.T) {
 	ctx := context.Background()
 
 	clusterName := "ns-curated-" + strconv.FormatInt(int64(uuid.New().ID()), 16)
-	cluster, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: clusterName})
+	cluster, _, err := pg.EnsureCluster(ctx, api.ClusterCreate{Name: clusterName})
 	if err != nil {
 		t.Fatalf("seed cluster: %v", err)
 	}
@@ -2027,7 +2036,7 @@ func TestPGNodeCuratedMetadata(t *testing.T) {
 	ctx := context.Background()
 
 	clusterName := "node-curated-" + strconv.FormatInt(int64(uuid.New().ID()), 16)
-	cluster, err := pg.CreateCluster(ctx, api.ClusterCreate{Name: clusterName})
+	cluster, _, err := pg.EnsureCluster(ctx, api.ClusterCreate{Name: clusterName})
 	if err != nil {
 		t.Fatalf("seed cluster: %v", err)
 	}

@@ -5,7 +5,6 @@ package collector
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -245,9 +244,15 @@ type KubeSource interface {
 
 // CmdbStore is the subset of api.Store the collector consumes. Exported so
 // the apiclient package (push-mode HTTP store) can implement it.
+//
+// EnsureCluster is the only cluster-bootstrap entry point — neither
+// CreateCluster nor GetClusterByName are exposed on this interface. Push-mode
+// collectors deployed behind the DMZ ingest gateway (ADR-0016) cannot reach
+// any read endpoint, so the collector must be able to bootstrap its cluster
+// row using POSTs only. EnsureCluster wraps the idempotent POST /v1/clusters
+// behaviour from ADR-0016 §6.
 type CmdbStore interface {
-	CreateCluster(ctx context.Context, in api.ClusterCreate) (api.Cluster, error)
-	GetClusterByName(ctx context.Context, name string) (api.Cluster, error)
+	EnsureCluster(ctx context.Context, in api.ClusterCreate) (cluster api.Cluster, created bool, err error)
 	UpdateCluster(ctx context.Context, id uuid.UUID, in api.ClusterUpdate) (api.Cluster, error)
 	UpsertNode(ctx context.Context, in api.NodeCreate) (api.Node, error)
 	DeleteNodesNotIn(ctx context.Context, clusterID uuid.UUID, keepNames []string) (int64, error)
@@ -330,24 +335,19 @@ func (c *Collector) poll(parent context.Context) {
 	}
 	metrics.MarkPoll(c.clusterName, "version")
 
-	cluster, err := c.store.GetClusterByName(ctx, c.clusterName)
+	// Idempotent on name: 201 on first contact, 200 on every subsequent tick.
+	// One call replaces the previous GET-then-conditional-POST pattern, which
+	// is mandatory for push-mode collectors behind the strict-write-only
+	// DMZ ingest gateway (ADR-0016).
+	cluster, created, err := c.store.EnsureCluster(ctx, api.ClusterCreate{Name: c.clusterName})
 	if err != nil {
-		if errors.Is(err, api.ErrNotFound) {
-			// Auto-create the cluster on first contact.
-			cluster, err = c.store.CreateCluster(ctx, api.ClusterCreate{Name: c.clusterName})
-			if err != nil {
-				metrics.ObserveError(c.clusterName, "cluster", "create")
-				slog.Error("collector: auto-create cluster failed",
-					slog.Any("error", err), slog.String("cluster_name", c.clusterName))
-				return
-			}
-			slog.Info("collector: auto-created cluster", slog.String("cluster_name", c.clusterName))
-		} else {
-			metrics.ObserveError(c.clusterName, "cluster", "lookup")
-			slog.Error("collector: lookup cluster failed",
-				slog.Any("error", err), slog.String("cluster_name", c.clusterName))
-			return
-		}
+		metrics.ObserveError(c.clusterName, "cluster", "ensure")
+		slog.Error("collector: ensure cluster failed",
+			slog.Any("error", err), slog.String("cluster_name", c.clusterName))
+		return
+	}
+	if created {
+		slog.Info("collector: auto-created cluster", slog.String("cluster_name", c.clusterName))
 	}
 	if cluster.Id == nil {
 		slog.Error("collector: stored cluster has nil id", slog.String("cluster_name", c.clusterName))

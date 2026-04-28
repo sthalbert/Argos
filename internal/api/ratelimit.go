@@ -57,3 +57,53 @@ func (rl *LoginRateLimiter) cleanup() {
 		rl.mu.Unlock()
 	}
 }
+
+// VerifyRateLimiter provides per-IP rate limiting for the ingest-listener
+// /v1/auth/verify endpoint (ADR-0016 §5). 100 req/s per source IP with a
+// burst of 200 — generous enough that a healthy gateway never hits it,
+// strict enough to make a buggy build that bypassed the verify cache
+// visible immediately. The "source IP" in practice is always the gateway
+// pod's IP since this listener is only reachable across one mTLS hop.
+type VerifyRateLimiter struct {
+	mu       sync.Mutex
+	limiters map[string]*rlEntry
+}
+
+// NewVerifyRateLimiter creates a rate limiter allowing 100 verify calls
+// per second per source IP with a burst of 200.
+func NewVerifyRateLimiter() *VerifyRateLimiter {
+	rl := &VerifyRateLimiter{
+		limiters: make(map[string]*rlEntry),
+	}
+	go rl.cleanup()
+	return rl
+}
+
+// Allow returns true if the IP is within the rate limit.
+func (rl *VerifyRateLimiter) Allow(ip string) bool {
+	rl.mu.Lock()
+	e, ok := rl.limiters[ip]
+	if !ok {
+		// 100 tokens per second, burst of 200 — see ADR-0016 §5.
+		e = &rlEntry{lim: rate.NewLimiter(rate.Limit(100), 200)} //nolint:mnd // documented in ADR
+		rl.limiters[ip] = e
+	}
+	e.lastSeen = time.Now()
+	rl.mu.Unlock()
+	return e.lim.Allow()
+}
+
+// cleanup mirrors LoginRateLimiter.cleanup — eviction window long enough
+// that a quiet collector still has its bucket on the next tick.
+func (rl *VerifyRateLimiter) cleanup() {
+	for {
+		time.Sleep(10 * time.Minute) //nolint:mnd // cleanup cadence
+		rl.mu.Lock()
+		for ip, e := range rl.limiters {
+			if time.Since(e.lastSeen) > 30*time.Minute { //nolint:mnd // eviction window
+				delete(rl.limiters, ip)
+			}
+		}
+		rl.mu.Unlock()
+	}
+}

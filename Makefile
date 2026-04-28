@@ -9,7 +9,7 @@ VM_COLLECTOR_BINARY := argos-vm-collector
 IMAGE_NAME ?= argos
 IMAGE_TAG  ?= dev
 
-.PHONY: all build build-noui build-collector build-vm-collector generate test test-one vet lint fmt tidy check clean docker-build docker-build-collector docker-build-vm-collector ui-install ui-build ui-dev ui-check
+.PHONY: all build build-noui build-collector build-vm-collector generate test test-one vet lint fmt tidy check clean docker-build docker-build-collector docker-build-vm-collector docker-build-ingest-gw ui-install ui-build ui-dev ui-check
 
 all: build
 
@@ -65,6 +65,13 @@ docker-build-vm-collector:
 		--build-arg VERSION=$(VERSION) \
 		-f Dockerfile.vm-collector \
 		-t $(IMAGE_NAME)-vm-collector:$(IMAGE_TAG) \
+		.
+
+docker-build-ingest-gw:
+	docker build \
+		--build-arg VERSION=$(VERSION) \
+		-f Dockerfile.ingest-gw \
+		-t $(IMAGE_NAME)-ingest-gw:$(IMAGE_TAG) \
 		.
 
 test:

@@ -77,12 +77,23 @@ Pass `next_cursor` as the `cursor` query parameter to fetch the next page. When 
 | Method | Path | Scope | Description |
 |--------|------|-------|-------------|
 | GET | `/v1/clusters` | `read` | List clusters. Optional `?name=exact-match` filter. |
-| POST | `/v1/clusters` | `write` | Register a cluster. |
+| POST | `/v1/clusters` | `write` | Register or fetch a cluster by name (idempotent — see below). |
 | GET | `/v1/clusters/{id}` | `read` | Get a cluster by ID. |
 | PATCH | `/v1/clusters/{id}` | `write` | Update mutable fields (merge-patch). |
 | DELETE | `/v1/clusters/{id}` | `delete` | Delete a cluster and all its children. |
 
-**Create a cluster:**
+**`POST /v1/clusters` is idempotent on `name` (ADR-0016 §6):**
+
+| Pre-state | Status | Body |
+|-----------|--------|------|
+| No row with that `name` | `201 Created` | The newly created cluster object. |
+| Row already exists with that `name` | `200 OK` | The existing cluster object. The request body is ignored on a hit. |
+
+When you get a `200`, follow up with `PATCH /v1/clusters/{id}` to apply any field updates you intended — the idempotent POST does not merge the request body on a hit.
+
+> **Audit note:** audit consumers that query for "cluster creates" by filtering on status code 201 will now miss the `200` case. Query by `action=cluster.create` instead, or include both status codes.
+
+**Create or fetch a cluster:**
 
 ```bash
 curl -sS -H "Authorization: Bearer $TOKEN" -X POST http://localhost:8080/v1/clusters \
@@ -92,6 +103,7 @@ curl -sS -H "Authorization: Bearer $TOKEN" -X POST http://localhost:8080/v1/clus
     "display_name": "Production",
     "environment": "production"
   }'
+# Returns 201 on first call, 200 on subsequent calls.
 ```
 
 **Update curated metadata:**
@@ -272,6 +284,7 @@ Response:
 | POST | `/v1/auth/logout` | yes | End the current session. |
 | GET | `/v1/auth/me` | yes | Caller identity, role, scopes, `must_change_password`. |
 | POST | `/v1/auth/change-password` | session only | Change the current user's password. |
+| POST | `/v1/auth/verify` | mTLS client cert | Token verification for the DMZ ingest gateway (see below). |
 | GET | `/v1/auth/oidc/authorize` | no | Start the OIDC flow (302 to IdP). |
 | GET | `/v1/auth/oidc/callback` | no | Complete the OIDC flow (302 to UI). |
 
@@ -308,6 +321,54 @@ curl -sS -b /tmp/argos.cookies -X POST http://localhost:8080/v1/auth/change-pass
   -d '{"current_password":"old","new_password":"new-strong-passphrase"}'
 # 204 on success. All other sessions invalidated.
 ```
+
+**`POST /v1/auth/verify` — token verification (DMZ ingest gateway, ADR-0016 §5):**
+
+This endpoint is served **only on argosd's mTLS ingest listener** (`:8443` when `ARGOS_INGEST_LISTEN_ADDR` is set). It is not reachable on argosd's public `:8080` listener. The caller must present a valid mTLS client certificate — there is no `Authorization` header on the verify call itself. The ingest gateway uses this endpoint to verify collector PATs before forwarding requests.
+
+Request body:
+
+```json
+{"token": "argos_pat_<prefix>_<suffix>"}
+```
+
+Successful response (`200 OK`):
+
+```json
+{
+  "valid": true,
+  "caller_id": "8c4b1234-...",
+  "kind": "token",
+  "token_name": "prod-collector",
+  "scopes": ["read", "write"],
+  "bound_cloud_account_id": null,
+  "exp": 1735689600
+}
+```
+
+Response fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `valid` | boolean | Always `true` on a 200 response. |
+| `caller_id` | UUID | The token's owner (user ID). |
+| `kind` | string | Always `"token"` for PATs. |
+| `token_name` | string | The human-readable name given to the token at issuance. |
+| `scopes` | string[] | The scopes granted to the token. |
+| `bound_cloud_account_id` | UUID or null | For `vm-collector` PATs: the cloud account the token is bound to. Null for all other token types. |
+| `exp` | integer | Unix timestamp when the token expires. `0` means no expiry. |
+
+Invalid token (`401 Unauthorized`): returns an RFC 7807 problem doc with no detail — no information about why the token was rejected is returned:
+
+```json
+{
+  "type": "about:blank",
+  "title": "Unauthorized",
+  "status": 401
+}
+```
+
+Rate limit: 100 req/s per source IP on argosd (the gateway cache reduces steady-state call volume to well below this). The `token` field in the request body is redacted from the audit log.
 
 ---
 

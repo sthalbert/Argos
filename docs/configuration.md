@@ -97,6 +97,20 @@ The MCP (Model Context Protocol) server is disabled by default. It exposes read-
 | `ARGOS_MCP_ADDR` | no | `:3001` | Listen address for the SSE transport. Ignored when transport is `stdio`. |
 | `ARGOS_MCP_TOKEN` | no | -- | Bearer token required for MCP requests. When unset, the MCP server inherits the standard argosd bearer token authentication. |
 
+### DMZ ingest gateway (ADR-0016)
+
+The ingest listener is disabled by default. Set `ARGOS_INGEST_LISTEN_ADDR` to enable it. See [How to deploy the DMZ ingest gateway](how-to-deploy-dmz-ingest-gateway.md) for the full operator walkthrough.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ARGOS_INGEST_LISTEN_ADDR` | no | empty (disabled) | Bind address for the mTLS-only ingest listener. Setting this variable enables the second listener. Example: `:8443`. When unset, none of the ingest listener machinery starts and argosd behaves identically to today. |
+| `ARGOS_INGEST_LISTEN_TLS_CERT` | when ingest enabled | — | Path to a PEM-encoded server certificate presented on the ingest listener. Must be signed by a CA your mTLS client (the gateway) trusts. |
+| `ARGOS_INGEST_LISTEN_TLS_KEY` | when ingest enabled | — | Path to the private key matching `ARGOS_INGEST_LISTEN_TLS_CERT`. |
+| `ARGOS_INGEST_LISTEN_CLIENT_CA_FILE` | when ingest enabled | — | Path to a PEM-encoded CA bundle. Only client certs signed by this CA are accepted at the mTLS handshake. Typically the Vault PKI intermediate, an internal CA, or the cert-manager ClusterIssuer CA. |
+| `ARGOS_INGEST_LISTEN_CLIENT_CN_ALLOW` | no | empty (any CN) | Comma-separated list of allowed Subject CNs on the client cert. When set (e.g. `argos-ingest-gw`), blocks any other cert the same CA might issue. Leave unset to accept any cert signed by the CA above. |
+
+---
+
 ### Secrets master key
 
 When you catalogue cloud accounts (ADR-0015), the cloud-provider Secret Keys are encrypted at rest with AES-256-GCM under a master key supplied via env var. See [Cloud accounts — master-key backup](cloud-accounts.md#master-key-backup) for the full operational guide.
@@ -223,3 +237,54 @@ The standalone push-mode collector for non-Kubernetes platform VMs (ADR-0015). P
 The collector uses the same TLS / gateway / proxy variables as the kube push collector — see [`argos-collector` → TLS and gateway](#tls-and-gateway) and [`argos-collector` → Proxy](#proxy). Variables: `ARGOS_CA_CERT`, `ARGOS_CLIENT_CERT`, `ARGOS_CLIENT_KEY`, `ARGOS_EXTRA_HEADERS`, `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`.
 
 > **No AK/SK env var.** Cloud-provider credentials live exclusively in argosd's `cloud_accounts` table and are fetched at runtime over HTTPS. This is deliberate — see [ADR-0015 §4](adr/adr-0015-vm-collector-for-non-kubernetes-platform-vms.md).
+
+---
+
+## argos-ingest-gw
+
+The DMZ ingest gateway (ADR-0016). A stateless reverse proxy that runs in the DMZ, enforces a write-only allowlist of 18 collector routes, verifies bearer PATs against argosd, and forwards approved requests over mTLS. See [How to deploy the DMZ ingest gateway](how-to-deploy-dmz-ingest-gateway.md) for the full operator walkthrough.
+
+### Inbound listener
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ARGOS_INGEST_GW_LISTEN_ADDR` | no | `:8443` | Bind address for the ingest listener (the port Envoy/WAF forwards to). |
+| `ARGOS_INGEST_GW_LISTEN_TLS_CERT` | yes | — | Path to the PEM-encoded server certificate presented to Envoy (and to collectors, via Envoy passthrough). |
+| `ARGOS_INGEST_GW_LISTEN_TLS_KEY` | yes | — | Path to the private key matching `ARGOS_INGEST_GW_LISTEN_TLS_CERT`. |
+| `ARGOS_INGEST_GW_HEALTH_ADDR` | no | `:9090` | Bind address for the health and Prometheus metrics endpoints. No TLS. Bind to the pod IP — never expose via Envoy. |
+
+### Upstream (argosd ingest listener)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ARGOS_INGEST_GW_UPSTREAM_URL` | yes | — | Full URL of argosd's mTLS ingest listener. Example: `https://argosd-ingest.argos.svc.cluster.local:8443`. |
+| `ARGOS_INGEST_GW_UPSTREAM_HOST` | no | host extracted from `UPSTREAM_URL` | Override the `Host:` header rewritten on proxied requests. Useful when argosd's TLS cert CN differs from the DNS name in the URL. |
+| `ARGOS_INGEST_GW_UPSTREAM_TIMEOUT` | no | `30s` | Per-request timeout for upstream calls. On timeout the gateway returns 503 to the collector without caching the failure. |
+| `ARGOS_INGEST_GW_UPSTREAM_CA_FILE` | yes | — | Path to the PEM-encoded CA bundle used to verify argosd's server cert. Required because argosd's ingest listener is typically signed by an internal CA. |
+
+### mTLS client certificate (gateway → argosd)
+
+The gateway always presents a client cert when connecting to argosd. The cert is loaded from two files and hot-reloaded on change via an `fsnotify` watcher — no pod restart required on rotation. See [the how-to guide](how-to-deploy-dmz-ingest-gateway.md) for the three ways to populate these files (Vault PKI, Kubernetes Secret / cert-manager, or file mount).
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ARGOS_INGEST_GW_CLIENT_CERT_FILE` | yes | `/etc/argos-ingest-gw/tls/tls.crt` | Path to the PEM-encoded mTLS client certificate. The Helm chart writes cert data here regardless of which TLS mode (vault / secret / file) is selected. |
+| `ARGOS_INGEST_GW_CLIENT_KEY_FILE` | yes | `/etc/argos-ingest-gw/tls/tls.key` | Path to the private key matching `ARGOS_INGEST_GW_CLIENT_CERT_FILE`. |
+
+### Token verification cache
+
+The gateway verifies each collector PAT against argosd once and caches the result. The cache is keyed on the full token's SHA-256 — not just its 8-character prefix.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ARGOS_INGEST_GW_CACHE_TTL` | no | `60s` | How long a valid token verification result is cached. Revocation lag = this value worst case. |
+| `ARGOS_INGEST_GW_CACHE_NEGATIVE_TTL` | no | `10s` | How long an invalid token (401 from argosd) is cached. Absorbs brute-force / scanner traffic without a full verify round-trip per request. |
+| `ARGOS_INGEST_GW_CACHE_MAX_ENTRIES` | no | `10000` | Maximum number of cache entries (LRU eviction). 10 000 entries cap RAM at ~5 MiB. |
+
+### Request handling
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ARGOS_INGEST_GW_MAX_BODY_BYTES` | no | `10485760` (10 MiB) | Maximum accepted request body size in bytes. Requests exceeding this limit are rejected with 413 before any upstream call. |
+| `ARGOS_INGEST_GW_LOG_LEVEL` | no | `info` | Structured log verbosity. One of `debug`, `info`, `warn`, `error`. |
+| `ARGOS_INGEST_GW_SHUTDOWN_TIMEOUT` | no | `30s` | Graceful drain budget after SIGTERM. In-flight proxied requests complete up to this deadline.

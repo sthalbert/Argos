@@ -135,7 +135,13 @@ paths:
 
     post:
       tags: [clusters]
-      summary: Register a cluster
+      summary: Register or ensure a cluster
+      description: |
+        Idempotent on `name`. If no cluster with the given name exists, a new
+        row is inserted and `201 Created` is returned. If a cluster with the
+        same name already exists, the existing row is returned with `200 OK`
+        and the request body is ignored — callers wanting to update fields
+        on an existing cluster should follow up with `PATCH /v1/clusters/{id}`.
       operationId: createCluster
       security:
         - BearerAuth: [write]
@@ -146,6 +152,18 @@ paths:
             schema:
               $ref: '#/components/schemas/ClusterCreate'
       responses:
+        '200':
+          description: Cluster with this name already exists; the existing row is returned.
+          headers:
+            Location:
+              description: URI of the existing cluster.
+              schema:
+                type: string
+                format: uri
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cluster'
         '201':
           description: Cluster created.
           headers:
@@ -164,8 +182,6 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-        '409':
-          $ref: '#/components/responses/Conflict'
 
   /v1/clusters/{id}:
     parameters:
@@ -1715,6 +1731,49 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
+  /v1/auth/verify:
+    post:
+      tags: [auth]
+      summary: Verify a bearer token
+      description: |
+        Internal RPC used by the DMZ ingest gateway (ADR-0016 §5) to
+        short-circuit invalid tokens before they cross the firewall into
+        the trusted zone. Performs the same argon2id check the bearer
+        middleware runs per request and returns the resulting caller
+        identity, scopes, and expiry without modifying any HTTP state on
+        argosd's side.
+
+        **This endpoint is served only on argosd's mTLS-only ingest
+        listener** (enabled via `ARGOS_INGEST_LISTEN_ADDR`). Argosd's
+        public listener does not register it. The mTLS handshake is the
+        sole authentication mechanism for this call — there is no
+        Authorization header on the request itself; the client cert
+        identifies the caller as the gateway. Any non-mTLS caller is
+        rejected at the TLS handshake by the listener's
+        `RequireAndVerifyClientCert` setting.
+
+        The endpoint is rate-limited at argosd to a small per-source-IP
+        budget as a backstop in case the gateway's verify cache is
+        bypassed by a buggy build.
+      operationId: verifyToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyTokenRequest'
+      responses:
+        '200':
+          description: Token is valid; caller identity, scopes, and expiry returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifyTokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /v1/admin/users:
     get:
       tags: [admin]
@@ -1984,6 +2043,15 @@ paths:
           schema:
             type: string
           description: Filter to a specific action verb (e.g. `user.create`).
+        - name: source
+          in: query
+          schema:
+            type: string
+            enum: [api, ingest_gw, system]
+          description: |
+            Filter to events served by a specific listener. Useful for
+            answering "what came through the DMZ ingest gateway" (ADR-0016)
+            without cross-referencing source IPs.
         - name: since
           in: query
           schema:
@@ -3837,6 +3905,69 @@ components:
           minLength: 12
           maxLength: 1024
 
+    VerifyTokenRequest:
+      description: |
+        Bearer token to verify. The DMZ ingest gateway (ADR-0016) uses
+        this to short-circuit invalid tokens before they cross the
+        firewall. Sent over mTLS only — argosd's public listener does
+        not serve `POST /v1/auth/verify`.
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+          description: Opaque PAT (`argos_pat_<prefix>_<suffix>`).
+          maxLength: 256
+
+    VerifyTokenResponse:
+      description: |
+        Token verification result. Returned only when the token is valid;
+        invalid / unknown / expired / revoked tokens get a 401 with no
+        identifying detail (a verifier cannot infer which bit was wrong).
+      type: object
+      required: [valid, kind, scopes]
+      properties:
+        valid:
+          type: boolean
+          description: Always `true` in a 200 response. Reserved for future use.
+        kind:
+          type: string
+          enum: [token]
+          description: |
+            The verify endpoint authenticates only bearer tokens. Cookie
+            sessions cannot be verified through this RPC since they do
+            not survive the DMZ hop.
+        caller_id:
+          type: string
+          format: uuid
+          description: Token id (the row's primary key in `api_tokens`).
+        token_name:
+          type: string
+          description: Cosmetic — for log lines and audit entries on the gateway side.
+        scopes:
+          type: array
+          items:
+            type: string
+          description: |
+            Token's declared scopes. The gateway must consult these
+            before forwarding to short-circuit obvious scope mismatches.
+        bound_cloud_account_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: |
+            Set on tokens issued with the `vm-collector` scope (ADR-0015).
+            The DMZ ingest gateway is intended for K8s collectors only;
+            `vm-collector` tokens are surfaced here so the gateway can
+            reject them at the cache layer rather than forwarding.
+        exp:
+          type: integer
+          format: int64
+          description: |
+            Token expiry as a Unix epoch second. Omitted when the token
+            does not expire. The gateway caches verify results for the
+            lesser of its configured TTL and `(exp - now)`.
+
     Me:
       description: Caller identity, role, and effective scopes.
       type: object
@@ -4154,6 +4285,15 @@ components:
           type: string
         http_status:
           type: integer
+        source:
+          type: string
+          enum: [api, ingest_gw, system]
+          description: |
+            Which listener served the request. `api` is argosd's public
+            listener (humans, admins, trusted-zone collectors). `ingest_gw`
+            is the mTLS-only ingest listener fronted by the DMZ gateway
+            (ADR-0016). `system` is for synthetic events emitted by argosd
+            itself, not driven by an HTTP request.
         source_ip:
           type: string
           nullable: true

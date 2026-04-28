@@ -73,22 +73,28 @@ func (p *PG) Migrate(ctx context.Context) error {
 	return nil
 }
 
-// CreateCluster inserts a new cluster and returns the stored representation.
+// EnsureCluster inserts a cluster row when no row with the same name exists,
+// or returns the existing row unchanged when one does. The returned bool is
+// true when a new row was inserted, false when an existing row was returned.
+//
+// Concurrent inserts of the same name are resolved by INSERT ... ON CONFLICT
+// (name) DO NOTHING: the winner inserts and gets RETURNING rows, the losing
+// writer falls back to a SELECT for the existing row.
 //
 //nolint:gocritic // hugeParam: Store interface requires value param
-func (p *PG) CreateCluster(ctx context.Context, in api.ClusterCreate) (api.Cluster, error) {
+func (p *PG) EnsureCluster(ctx context.Context, in api.ClusterCreate) (api.Cluster, bool, error) {
 	id := uuid.New()
 	now := time.Now().UTC()
 
 	labelsJSON, err := marshalLabels(in.Labels)
 	if err != nil {
-		return api.Cluster{}, err
+		return api.Cluster{}, false, err
 	}
 	annotationsJSON, err := marshalLabels(in.Annotations)
 	if err != nil {
 		// marshalLabels' own message says "marshal labels"; rewrap so
 		// the operator-facing error points at annotations instead.
-		return api.Cluster{}, fmt.Errorf("marshal cluster annotations: %w", err)
+		return api.Cluster{}, false, fmt.Errorf("marshal cluster annotations: %w", err)
 	}
 
 	const q = `
@@ -98,39 +104,46 @@ func (p *PG) CreateCluster(ctx context.Context, in api.ClusterCreate) (api.Clust
 			owner, criticality, notes, runbook_url, annotations,
 			created_at, updated_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $15)
+		ON CONFLICT (name) DO NOTHING
+		RETURNING id
 	`
-	_, err = p.pool.Exec(ctx, q,
+	var insertedID uuid.UUID
+	err = p.pool.QueryRow(ctx, q,
 		id, in.Name, in.DisplayName, in.Environment, in.Provider, in.Region,
 		in.KubernetesVersion, in.ApiEndpoint, labelsJSON,
 		in.Owner, in.Criticality, in.Notes, in.RunbookUrl, annotationsJSON,
 		now,
-	)
-	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return api.Cluster{}, fmt.Errorf("cluster name %q already exists: %w", in.Name, api.ErrConflict)
+	).Scan(&insertedID)
+	switch {
+	case err == nil:
+		return api.Cluster{
+			Id:                &insertedID,
+			Name:              in.Name,
+			DisplayName:       in.DisplayName,
+			Environment:       in.Environment,
+			Provider:          in.Provider,
+			Region:            in.Region,
+			KubernetesVersion: in.KubernetesVersion,
+			ApiEndpoint:       in.ApiEndpoint,
+			Labels:            in.Labels,
+			Owner:             in.Owner,
+			Criticality:       in.Criticality,
+			Notes:             in.Notes,
+			RunbookUrl:        in.RunbookUrl,
+			Annotations:       in.Annotations,
+			CreatedAt:         &now,
+			UpdatedAt:         &now,
+		}, true, nil
+	case errors.Is(err, pgx.ErrNoRows):
+		// ON CONFLICT DO NOTHING — row already exists. Read it back.
+		existing, getErr := p.GetClusterByName(ctx, in.Name)
+		if getErr != nil {
+			return api.Cluster{}, false, fmt.Errorf("ensure cluster %q: fetch existing: %w", in.Name, getErr)
 		}
-		return api.Cluster{}, fmt.Errorf("insert cluster: %w", err)
+		return existing, false, nil
+	default:
+		return api.Cluster{}, false, fmt.Errorf("insert cluster: %w", err)
 	}
-
-	return api.Cluster{
-		Id:                &id,
-		Name:              in.Name,
-		DisplayName:       in.DisplayName,
-		Environment:       in.Environment,
-		Provider:          in.Provider,
-		Region:            in.Region,
-		KubernetesVersion: in.KubernetesVersion,
-		ApiEndpoint:       in.ApiEndpoint,
-		Labels:            in.Labels,
-		Owner:             in.Owner,
-		Criticality:       in.Criticality,
-		Notes:             in.Notes,
-		RunbookUrl:        in.RunbookUrl,
-		Annotations:       in.Annotations,
-		CreatedAt:         &now,
-		UpdatedAt:         &now,
-	}, nil
 }
 
 // GetCluster fetches a cluster by id.

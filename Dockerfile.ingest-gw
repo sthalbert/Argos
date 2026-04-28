@@ -1,0 +1,46 @@
+# syntax=docker/dockerfile:1.7
+#
+# argos-ingest-gw container image (ADR-0016).
+# Two-stage: golang builder -> distroless static runtime. No UI stage needed.
+# Binary is static (CGO_ENABLED=0) and runs as non-root UID 65532.
+
+ARG GO_VERSION=1.26
+
+FROM golang:${GO_VERSION} AS build
+
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go mod download
+
+COPY . .
+
+ARG VERSION=docker
+ARG TARGETOS
+ARG TARGETARCH
+
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 \
+    GOOS=${TARGETOS:-linux} \
+    GOARCH=${TARGETARCH:-amd64} \
+    go build \
+        -trimpath \
+        -ldflags "-s -w -X main.version=${VERSION}" \
+        -o /out/argos-ingest-gw \
+        ./cmd/argos-ingest-gw
+
+FROM gcr.io/distroless/static-debian12:nonroot
+
+COPY --from=build /out/argos-ingest-gw /argos-ingest-gw
+
+USER nonroot:nonroot
+
+# Inbound HTTPS listener (collectors → gateway).
+EXPOSE 8443
+# Health + metrics (plaintext, pod-local).
+EXPOSE 9090
+
+ENTRYPOINT ["/argos-ingest-gw"]

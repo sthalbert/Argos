@@ -149,6 +149,21 @@ var (
 		Name:      "credentials_reads_total",
 		Help:      "Cumulative successful credential fetches via GET /v1/cloud-accounts/.../credentials.",
 	}, []string{"cloud_account"})
+
+	// DMZ ingest gateway metrics on the argosd side (ADR-0016).
+	ingestVerifyTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "argos",
+		Subsystem: "auth",
+		Name:      "verify_total",
+		Help:      "POST /v1/auth/verify calls, per outcome (valid / invalid / rate_limited).",
+	}, []string{"result"})
+
+	ingestListenerClientCertFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "argos",
+		Subsystem: "ingest_listener",
+		Name:      "client_cert_failures_total",
+		Help:      "Failed mTLS client-cert validations on the ingest listener, per reason (bad_ca / expired / cn_not_allowed / none_provided).",
+	}, []string{"reason"})
 )
 
 func init() {
@@ -173,7 +188,24 @@ func init() {
 		cloudAccountsPending,
 		virtualMachinesTotal,
 		credentialsReads,
+		ingestVerifyTotal,
+		ingestListenerClientCertFailures,
 	)
+}
+
+// IngestVerifyTotal increments the POST /v1/auth/verify outcome counter.
+// `result` is one of "valid", "invalid", "rate_limited" — the cardinality
+// stays bounded regardless of how many tokens or callers exist.
+func IngestVerifyTotal(result string) {
+	ingestVerifyTotal.WithLabelValues(result).Inc()
+}
+
+// IngestListenerClientCertFailure increments the mTLS handshake failure
+// counter on the argosd ingest listener. `reason` is one of "bad_ca",
+// "expired", "cn_not_allowed", "none_provided" so a misconfigured gateway
+// is diagnosable from a single Prometheus query.
+func IngestListenerClientCertFailure(reason string) {
+	ingestListenerClientCertFailures.WithLabelValues(reason).Inc()
 }
 
 // SetCloudAccountsTotal sets the per-status cloud-accounts gauge. Called

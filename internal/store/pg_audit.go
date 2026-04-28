@@ -15,9 +15,16 @@ import (
 	"github.com/sthalbert/argos/internal/api"
 )
 
-const auditEventColumns = `id, occurred_at, actor_id, actor_kind, actor_username, actor_role,
+// auditEventSelectColumns is the column list used for SELECT queries
+// against audit_events. Order must match the Scan() in ListAuditEvents.
+const auditEventSelectColumns = `id, occurred_at, actor_id, actor_kind, actor_username, actor_role,
 	action, resource_type, resource_id, http_method, http_path, http_status,
-	source_ip, user_agent, details`
+	source, source_ip, user_agent, details`
+
+// auditEventColumns is the column list used for INSERT statements.
+// Mirrors auditEventSelectColumns column-for-column so the $N
+// placeholders in InsertAuditEvent stay in lock-step.
+const auditEventColumns = auditEventSelectColumns
 
 // InsertAuditEvent appends an audit event to the append-only audit_events table.
 //
@@ -31,16 +38,24 @@ func (p *PG) InsertAuditEvent(ctx context.Context, in api.AuditEventInsert) erro
 		}
 		detailsArg = b
 	}
+	source := in.Source
+	if source == "" {
+		// Migration default + back-compat for callers built before ADR-0016
+		// added the column. The CHECK constraint on the column rejects any
+		// other empty / unknown value, so always emit a known label here.
+		source = "api"
+	}
 	// nullable string columns: store empty strings as SQL NULL so filter
 	// queries on IS NULL stay clean.
 	_, err := p.pool.Exec(ctx,
 		`INSERT INTO audit_events (`+auditEventColumns+`)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
 		in.ID, in.OccurredAt, in.ActorID, in.ActorKind,
 		nullableTextArg(in.ActorUsername), nullableTextArg(in.ActorRole),
 		in.Action,
 		nullableTextArg(in.ResourceType), nullableTextArg(in.ResourceID),
 		in.HTTPMethod, in.HTTPPath, in.HTTPStatus,
+		source,
 		nullableTextArg(in.SourceIP), nullableTextArg(in.UserAgent),
 		detailsArg,
 	)
@@ -62,7 +77,7 @@ func (p *PG) ListAuditEvents(ctx context.Context, filter api.AuditEventFilter, l
 		limit = 500
 	}
 	sb := strings.Builder{}
-	sb.WriteString(`SELECT ` + auditEventColumns + ` FROM audit_events WHERE 1=1`)
+	sb.WriteString(`SELECT ` + auditEventSelectColumns + ` FROM audit_events WHERE 1=1`)
 	args := make([]any, 0, 8)
 	if filter.ActorID != nil {
 		args = append(args, *filter.ActorID)
@@ -79,6 +94,10 @@ func (p *PG) ListAuditEvents(ctx context.Context, filter api.AuditEventFilter, l
 	if filter.Action != nil {
 		args = append(args, *filter.Action)
 		fmt.Fprintf(&sb, " AND action = $%d", len(args))
+	}
+	if filter.Source != nil {
+		args = append(args, *filter.Source)
+		fmt.Fprintf(&sb, " AND source = $%d", len(args))
 	}
 	if filter.Since != nil {
 		args = append(args, *filter.Since)
@@ -121,6 +140,7 @@ func (p *PG) ListAuditEvents(ctx context.Context, filter api.AuditEventFilter, l
 			actorRole     *string
 			resourceType  *string
 			resourceID    *string
+			source        string
 			sourceIP      *string
 			userAgent     *string
 			detailsRaw    []byte
@@ -128,7 +148,7 @@ func (p *PG) ListAuditEvents(ctx context.Context, filter api.AuditEventFilter, l
 		if err := rows.Scan(
 			&ev.Id, &ev.OccurredAt, &actorID, &actorKind, &actorUsername, &actorRole,
 			&ev.Action, &resourceType, &resourceID, &ev.HttpMethod, &ev.HttpPath, &ev.HttpStatus,
-			&sourceIP, &userAgent, &detailsRaw,
+			&source, &sourceIP, &userAgent, &detailsRaw,
 		); err != nil {
 			return nil, "", fmt.Errorf("scan audit event: %w", err)
 		}
@@ -138,6 +158,10 @@ func (p *PG) ListAuditEvents(ctx context.Context, filter api.AuditEventFilter, l
 		ev.ActorRole = actorRole
 		ev.ResourceType = resourceType
 		ev.ResourceId = resourceID
+		if source != "" {
+			s := api.AuditEventSource(source)
+			ev.Source = &s
+		}
 		ev.SourceIp = sourceIP
 		ev.UserAgent = userAgent
 		if len(detailsRaw) > 0 {

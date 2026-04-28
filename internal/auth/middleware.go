@@ -389,13 +389,30 @@ func tryBearer(r *http.Request, store Store) (*Caller, error) {
 	if presented == "" {
 		return nil, ErrUnauthorized
 	}
+	caller, err := VerifyBearerToken(r.Context(), store, presented)
+	if err != nil {
+		return nil, err
+	}
+	return caller, nil
+}
 
+// VerifyBearerToken validates an opaque PAT against the token store and
+// returns the resulting Caller without modifying any HTTP state. This is
+// the same argon2id verification path the bearer middleware runs per
+// request; exposed as its own function so the DMZ ingest gateway's
+// /v1/auth/verify endpoint (ADR-0016 §5) can run the check without
+// having to fabricate an http.Request.
+//
+// Returns ErrUnauthorized for malformed, unknown, expired, revoked, or
+// hash-mismatched tokens so callers can return 401 without leaking which
+// bit was wrong. Best-effort touches the token's last_used_at on success.
+func VerifyBearerToken(ctx context.Context, store Store, presented string) (*Caller, error) {
 	tokPrefix, _, err := ParseToken(presented)
 	if err != nil {
 		return nil, ErrUnauthorized
 	}
 
-	tok, err := store.GetActiveTokenByPrefix(r.Context(), tokPrefix)
+	tok, err := store.GetActiveTokenByPrefix(ctx, tokPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("get active token by prefix: %w", err)
 	}
@@ -404,7 +421,7 @@ func tryBearer(r *http.Request, store Store) (*Caller, error) {
 	}
 
 	// Best-effort last-used refresh. Don't fail the request if this errors.
-	_ = store.TouchToken(r.Context(), tok.ID, time.Now().UTC())
+	_ = store.TouchToken(ctx, tok.ID, time.Now().UTC())
 
 	return &Caller{
 		Kind:                CallerKindToken,

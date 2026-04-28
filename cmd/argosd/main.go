@@ -3,6 +3,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,6 +45,8 @@ var (
 	errNoCollectorClusters    = errors.New("ARGOS_COLLECTOR_CLUSTERS or ARGOS_CLUSTER_NAME must be set when ARGOS_COLLECTOR_ENABLED=true")
 	errInvalidCookiePolicy    = errors.New("ARGOS_SESSION_SECURE_COOKIE must be auto / always / never")
 	errEncryptedCredentials   = errors.New("secrets master key missing but cloud_accounts rows carry encrypted credentials")
+	errIngestMissingTLSConfig = errors.New("ARGOS_INGEST_LISTEN_ADDR is set but ARGOS_INGEST_LISTEN_TLS_CERT, " +
+		"ARGOS_INGEST_LISTEN_TLS_KEY, or ARGOS_INGEST_LISTEN_CLIENT_CA_FILE is missing — see ADR-0016 §4")
 )
 
 func main() {
@@ -64,6 +68,20 @@ type runConfig struct {
 	oidcCfg         auth.OIDCConfig
 	shutdownTimeout time.Duration
 	autoMigrate     bool
+	// ingest configures the optional mTLS-only ingest listener used by
+	// the DMZ ingest gateway (ADR-0016). When ingest.addr is empty the
+	// listener is not started and argosd behaves identically to today.
+	ingest ingestListenerConfig
+}
+
+// ingestListenerConfig captures the env-var surface for the ADR-0016
+// mTLS ingest listener. Empty addr → disabled.
+type ingestListenerConfig struct {
+	addr         string
+	tlsCertFile  string
+	tlsKeyFile   string
+	clientCAFile string
+	clientCNs    []string // empty = any CN signed by the CA passes
 }
 
 // loadRunConfig reads and validates all configuration from the environment.
@@ -90,6 +108,10 @@ func loadRunConfig() (runConfig, error) {
 	if err != nil {
 		return runConfig{}, err
 	}
+	ingest, err := loadIngestListenerConfig()
+	if err != nil {
+		return runConfig{}, err
+	}
 
 	return runConfig{
 		addr:            envOr("ARGOS_ADDR", ":8080"),
@@ -98,10 +120,50 @@ func loadRunConfig() (runConfig, error) {
 		oidcCfg:         loadOIDCConfig(),
 		shutdownTimeout: shutdownTimeout,
 		autoMigrate:     autoMigrate,
+		ingest:          ingest,
 	}, nil
 }
 
-func run() error {
+// loadIngestListenerConfig reads the ARGOS_INGEST_LISTEN_* env vars. When
+// ARGOS_INGEST_LISTEN_ADDR is empty the listener is disabled; otherwise
+// the cert + key + CA paths are required so misconfiguration fails at boot.
+func loadIngestListenerConfig() (ingestListenerConfig, error) {
+	addr := os.Getenv("ARGOS_INGEST_LISTEN_ADDR")
+	if addr == "" {
+		return ingestListenerConfig{}, nil
+	}
+	cert := os.Getenv("ARGOS_INGEST_LISTEN_TLS_CERT")
+	key := os.Getenv("ARGOS_INGEST_LISTEN_TLS_KEY")
+	clientCA := os.Getenv("ARGOS_INGEST_LISTEN_CLIENT_CA_FILE")
+	if cert == "" || key == "" || clientCA == "" {
+		return ingestListenerConfig{}, errIngestMissingTLSConfig
+	}
+	cns := splitCSV(os.Getenv("ARGOS_INGEST_LISTEN_CLIENT_CN_ALLOW"))
+	return ingestListenerConfig{
+		addr:         addr,
+		tlsCertFile:  cert,
+		tlsKeyFile:   key,
+		clientCAFile: clientCA,
+		clientCNs:    cns,
+	}, nil
+}
+
+// splitCSV trims and splits a comma-separated env var, dropping empties.
+func splitCSV(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := parts[:0]
+	for _, p := range parts {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func run() error { //nolint:gocyclo // daemon bootstrap; flat structure is clearer than factored helpers
 	cfg, err := loadRunConfig()
 	if err != nil {
 		return err
@@ -154,7 +216,17 @@ func run() error {
 
 	srv := buildHTTPServer(&cfg, pg, oidcProvider, encrypter)
 
-	return serveAndShutdown(rootCtx, srv, cfg.shutdownTimeout)
+	// Optional mTLS-only ingest listener fronted by the DMZ gateway
+	// (ADR-0016). Started in parallel with the public listener and
+	// drained alongside it on shutdown. When cfg.ingest.addr is empty,
+	// ingestSrv is nil and serveAndShutdown becomes a no-op for that
+	// half.
+	ingestSrv, err := buildIngestServer(&cfg, pg, oidcProvider, encrypter)
+	if err != nil {
+		return fmt.Errorf("build ingest listener: %w", err)
+	}
+
+	return serveAndShutdown(rootCtx, srv, ingestSrv, cfg.shutdownTimeout)
 }
 
 // initSecretsEncrypter constructs the AES-256-GCM encrypter (ADR-0015).
@@ -271,7 +343,7 @@ func buildHTTPServer(cfg *runConfig, pg *store.PG, oidcProvider *auth.OIDCProvid
 	// auditWrap → handler, so the audit layer always sees an
 	// authenticated caller. Mirrors the strict-server router below
 	// where AuditMiddleware sits inside AuthMiddleware in the chain.
-	auditWrap := api.AuditMiddleware(pg)
+	auditWrap := api.AuditMiddleware(pg, "api")
 
 	// Admin-side cloud-accounts.
 	mux.Handle("GET /v1/admin/cloud-accounts", requireScope(auth.ScopeAdmin)(cloudAuth(auditWrap(api.HandleListCloudAccounts(pg)))))
@@ -317,8 +389,9 @@ func buildHTTPServer(cfg *runConfig, pg *store.PG, oidcProvider *auth.OIDCProvid
 	mux.Handle("DELETE /v1/virtual-machines/{id}", requireScope(auth.ScopeDelete)(cloudAuth(auditWrap(api.HandleDeleteVirtualMachine(pg)))))
 
 	loginLimiter := api.NewLoginRateLimiter()
+	verifyLimiter := api.NewVerifyRateLimiter()
 	strict := api.NewStrictHandlerWithOptions(
-		api.NewServer(version, pg, cfg.cookiePolicy, oidcProvider, loginLimiter),
+		api.NewServer(version, pg, cfg.cookiePolicy, oidcProvider, loginLimiter, verifyLimiter),
 		[]api.StrictMiddlewareFunc{api.InjectRequestMiddleware},
 		api.StrictHTTPServerOptions{
 			RequestErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
@@ -338,14 +411,21 @@ func buildHTTPServer(cfg *runConfig, pg *store.PG, oidcProvider *auth.OIDCProvid
 		// outermost so it resolves the caller before the audit layer reads
 		// it from the request context.
 		Middlewares: []api.MiddlewareFunc{
-			api.AuditMiddleware(pg),
+			api.AuditMiddleware(pg, "api"),
 			api.AuthMiddleware(pg, cfg.cookiePolicy),
 		},
 	})
 
+	// /v1/auth/verify is reachable only on the mTLS-only ingest listener
+	// (ADR-0016 §3). The codegen router registers it on every mux it
+	// wires, so 404 it here on the public listener as defence in depth
+	// in case an operator runs argosd without configuring the ingest
+	// listener separately.
+	publicHandler := blockIngestOnlyPaths(mux)
+
 	return &http.Server{
 		Addr:              cfg.addr,
-		Handler:           metrics.InstrumentHandler(api.SecurityHeadersMiddleware(http.MaxBytesHandler(mux, 1<<20))),
+		Handler:           metrics.InstrumentHandler(api.SecurityHeadersMiddleware(http.MaxBytesHandler(publicHandler, 1<<20))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
@@ -353,20 +433,206 @@ func buildHTTPServer(cfg *runConfig, pg *store.PG, oidcProvider *auth.OIDCProvid
 	}
 }
 
-// serveAndShutdown starts the HTTP server, waits for a shutdown signal, and
-// drains gracefully.
-func serveAndShutdown(rootCtx context.Context, srv *http.Server, shutdownTimeout time.Duration) error {
-	errCh := make(chan error, 1)
+// blockIngestOnlyPaths 404s requests to paths that should never appear on
+// argosd's public listener. Today that's only POST /v1/auth/verify
+// (ADR-0016 §3): the ingest listener serves it; the public listener must
+// not. Belt-and-braces — the spec doesn't declare auth on the verify
+// endpoint, so a misconfigured deployment that mounts only the public
+// listener could otherwise expose it to anonymous callers.
+func blockIngestOnlyPaths(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/auth/verify" {
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// buildIngestServer constructs the optional mTLS-only ingest listener
+// (ADR-0016). Returns (nil, nil) when cfg.ingest.addr is empty —
+// "ingest disabled" is fully supported. Failure to load the cert/key/CA
+// is fatal so misconfiguration shows up at boot, not as cryptic 500s
+// per request.
+func buildIngestServer(
+	cfg *runConfig,
+	pg *store.PG,
+	oidcProvider *auth.OIDCProvider,
+	enc *secrets.Encrypter,
+) (*http.Server, error) {
+	if cfg.ingest.addr == "" {
+		return nil, nil //nolint:nilnil // nil server is the supported "disabled" sentinel
+	}
+	_ = oidcProvider // not used by the ingest listener; kept in the signature for symmetry
+	_ = enc          // same — encrypter is for cloud-account credentials, untouched here
+
+	clientCAs, err := loadPEMCertPool(cfg.ingest.clientCAFile)
+	if err != nil {
+		return nil, fmt.Errorf("load ingest client CA: %w", err)
+	}
+	getCert, err := newCertReloader(cfg.ingest.tlsCertFile, cfg.ingest.tlsKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load ingest server cert: %w", err)
+	}
+
+	loginLimiter := api.NewLoginRateLimiter() // unused on ingest, but Server requires non-nil
+	verifyLimiter := api.NewVerifyRateLimiter()
+	strict := api.NewStrictHandlerWithOptions(
+		api.NewServer(version, pg, cfg.cookiePolicy, oidcProvider, loginLimiter, verifyLimiter),
+		[]api.StrictMiddlewareFunc{api.InjectRequestMiddleware},
+		api.StrictHTTPServerOptions{
+			RequestErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
+				slog.Warn("ingest request parse error", slog.Any("error", err))
+				http.Error(w, "invalid request", http.StatusBadRequest)
+			},
+			ResponseErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
+				slog.Error("ingest unhandled handler error", slog.Any("error", err))
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+			},
+		},
+	)
+	mux := api.NewIngestMux(api.IngestMuxConfig{
+		Server:          strict,
+		AuthMiddleware:  api.AuthMiddleware(pg, cfg.cookiePolicy),
+		AuditMiddleware: api.AuditMiddleware(pg, "ingest_gw"),
+		CookiePolicy:    cfg.cookiePolicy,
+	})
+
+	cnAllow := cfg.ingest.clientCNs
+	tlsCfg := &tls.Config{
+		MinVersion:             tls.VersionTLS13,
+		ClientAuth:             tls.RequireAndVerifyClientCert,
+		ClientCAs:              clientCAs,
+		SessionTicketsDisabled: true,
+		GetCertificate:         getCert,
+		VerifyPeerCertificate:  enforceCNAllowlist(cnAllow),
+	}
+
+	return &http.Server{
+		Addr:              cfg.ingest.addr,
+		Handler:           metrics.InstrumentHandler(api.SecurityHeadersMiddleware(http.MaxBytesHandler(mux, 1<<20))),
+		TLSConfig:         tlsCfg,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}, nil
+}
+
+// loadPEMCertPool reads a PEM bundle from disk into an x509.CertPool.
+// Empty / missing files produce an explicit error so the operator sees
+// the misconfiguration at boot.
+func loadPEMCertPool(path string) (*x509.CertPool, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // operator-supplied path; fail loud if missing
+	if err != nil {
+		return nil, fmt.Errorf("read %q: %w", path, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(data) {
+		return nil, fmt.Errorf("no PEM certificates in %q", path) //nolint:err113 // local sentinel, not compared by callers
+	}
+	return pool, nil
+}
+
+// newCertReloader returns a TLSConfig.GetCertificate callback backed by
+// an atomic pointer to the loaded keypair. The caller can swap the file
+// contents on disk at any time; the next handshake reloads on a stat
+// change. Used for both server-side and client-side cert hot-reload.
+//
+// This minimal version reloads on every handshake when the file's mtime
+// changes — sufficient for argosd-side (cert rotation is infrequent).
+// The gateway binary (cmd/argos-ingest-gw) gets an fsnotify-driven
+// equivalent because it sees more frequent rotations from Vault Agent.
+func newCertReloader(certFile, keyFile string) (func(*tls.ClientHelloInfo) (*tls.Certificate, error), error) {
+	// Validate at startup so a missing / malformed cert fails the boot.
+	if _, err := tls.LoadX509KeyPair(certFile, keyFile); err != nil {
+		return nil, fmt.Errorf("load keypair: %w", err)
+	}
+	var (
+		mu     sync.Mutex
+		cached tls.Certificate
+		mtime  time.Time
+	)
+	return func(_ *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		st, err := os.Stat(certFile)
+		if err != nil {
+			return nil, fmt.Errorf("stat cert: %w", err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if !st.ModTime().Equal(mtime) {
+			fresh, err := tls.LoadX509KeyPair(certFile, keyFile)
+			if err != nil {
+				return nil, fmt.Errorf("reload keypair: %w", err)
+			}
+			cached = fresh
+			mtime = st.ModTime()
+		}
+		return &cached, nil
+	}, nil
+}
+
+// enforceCNAllowlist returns a TLSConfig.VerifyPeerCertificate callback
+// that fails the handshake if the leaf cert's Subject CN is not in the
+// allow list. Empty list = any CN signed by the trusted CA passes.
+//
+// Increments argos_ingest_listener_client_cert_failures_total{reason="cn_not_allowed"}
+// on rejection so a misconfigured gateway is diagnosable from a single
+// Prometheus query.
+func enforceCNAllowlist(allow []string) func([][]byte, [][]*x509.Certificate) error {
+	if len(allow) == 0 {
+		return nil
+	}
+	allowed := make(map[string]struct{}, len(allow))
+	for _, cn := range allow {
+		allowed[cn] = struct{}{}
+	}
+	return func(_ [][]byte, verifiedChains [][]*x509.Certificate) error {
+		if len(verifiedChains) == 0 || len(verifiedChains[0]) == 0 {
+			metrics.IngestListenerClientCertFailure("none_provided")
+			return fmt.Errorf("no verified peer certificate") //nolint:err113 // local sentinel returned to TLS stack, never compared
+		}
+		leaf := verifiedChains[0][0]
+		if _, ok := allowed[leaf.Subject.CommonName]; !ok {
+			metrics.IngestListenerClientCertFailure("cn_not_allowed")
+			return fmt.Errorf("client cert CN %q not in allow list", leaf.Subject.CommonName) //nolint:err113 // dynamic CN, not a comparable sentinel
+		}
+		return nil
+	}
+}
+
+// serveAndShutdown starts the public HTTP server (and, when configured,
+// the mTLS-only ingest listener), waits for a shutdown signal, and drains
+// both gracefully. ingestSrv may be nil — argosd treats the ingest listener
+// as opt-in and the absence of one is fully supported.
+func serveAndShutdown( //nolint:gocyclo // central shutdown dispatcher; flat select is clearer than nested helpers
+	rootCtx context.Context,
+	srv *http.Server,
+	ingestSrv *http.Server,
+	shutdownTimeout time.Duration,
+) error {
+	errCh := make(chan error, 2)
 	go func() {
 		slog.Info("argosd listening",
 			slog.String("addr", srv.Addr),
 			slog.String("version", version),
 		)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
+			errCh <- fmt.Errorf("public listener: %w", err)
 		}
-		close(errCh)
 	}()
+	if ingestSrv != nil {
+		go func() {
+			slog.Info("argosd ingest listener starting",
+				slog.String("addr", ingestSrv.Addr),
+				slog.String("version", version),
+			)
+			// TLS+mTLS — cert/key paths are baked into TLSConfig.GetCertificate.
+			if err := ingestSrv.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errCh <- fmt.Errorf("ingest listener: %w", err)
+			}
+		}()
+	}
 
 	select {
 	case <-rootCtx.Done():
@@ -375,16 +641,24 @@ func serveAndShutdown(rootCtx context.Context, srv *http.Server, shutdownTimeout
 		)
 	case err := <-errCh:
 		if err != nil {
-			return fmt.Errorf("http server: %w", err)
+			return err
 		}
 		return nil
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
-	//nolint:contextcheck // detached context — parent is already cancelled by shutdown signal
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("graceful shutdown: %w", err)
+	var firstErr error
+	if err := srv.Shutdown(shutdownCtx); err != nil { //nolint:contextcheck // detached context — parent is already cancelled by shutdown signal
+		firstErr = fmt.Errorf("public listener shutdown: %w", err)
+	}
+	if ingestSrv != nil {
+		if err := ingestSrv.Shutdown(shutdownCtx); err != nil && firstErr == nil { //nolint:contextcheck // see above — same detached shutdown context
+			firstErr = fmt.Errorf("ingest listener shutdown: %w", err)
+		}
+	}
+	if firstErr != nil {
+		return firstErr
 	}
 	slog.Info("argosd stopped cleanly")
 	return nil

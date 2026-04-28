@@ -6,6 +6,102 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 — the REST and database contracts may still change incompatibly before
 `v1.0.0`.
 
+## [0.11.0] — 2026-04-28
+
+Helm chart 0.13.0 / appVersion 0.11.0. Adds the DMZ ingest gateway track
+from ADR-0016: Argos can now accept collector push traffic through a
+hardened perimeter component (`argos-ingest-gw`) without exposing argosd
+to the internet. Also makes `POST /v1/clusters` idempotent on `name` so
+the collector no longer needs a read-before-write at startup.
+
+### Added
+
+- **`argos-ingest-gw` binary** (ADR-0016) — standalone stateless
+  reverse-proxy for the DMZ. Exposes a TLS inbound listener (`:8443`,
+  Envoy/WAF-fronted) and a health/metrics listener (`:9090`, pod-IP only,
+  no TLS). No database, no queue, no replay buffer. Source under
+  `cmd/argos-ingest-gw/`; shared gateway logic under `internal/ingestgw/`.
+  Built `CGO_ENABLED=0` from `Dockerfile.ingest-gw`, distroless base, UID
+  65532.
+- **Helm chart `argos-ingest-gw`** (chart `0.1.0`) — first ship of the
+  gateway chart. Ships independently of the umbrella `argos` chart so the
+  DMZ release contains only what belongs in the DMZ. Three TLS cert-source
+  modes: `vault` (Vault Agent sidecar + PKI secrets engine, hot-rotate at
+  50% TTL), `secret` (Kubernetes `kubernetes.io/tls` Secret, works with
+  cert-manager), `file` (operator-mounted path, any tooling). Default 2
+  replicas + PodDisruptionBudget. Optional ServiceMonitor + PrometheusRule
+  (suggested alerts shipped as values block). NetworkPolicy restricts
+  egress to argosd's ingest port only (plus Vault CIDRs in `vault` mode).
+- **mTLS-only ingest listener on argosd** (ADR-0016 §3) — a second
+  `*http.Server` starts when `ARGOS_INGEST_LISTEN_ADDR` is set (disabled
+  when empty; existing deployments unaffected). The listener requires
+  `RequireAndVerifyClientCert` (TLS 1.3 floor, session tickets disabled)
+  and is wired by `api.NewIngestMux`, which registers exactly 19 routes:
+  the 18 collector writes plus `POST /v1/auth/verify`. New env vars:
+  `ARGOS_INGEST_LISTEN_ADDR`, `ARGOS_INGEST_LISTEN_TLS_CERT`,
+  `ARGOS_INGEST_LISTEN_TLS_KEY`, `ARGOS_INGEST_LISTEN_CLIENT_CA_FILE`,
+  `ARGOS_INGEST_LISTEN_CLIENT_CN_ALLOW`.
+- **`POST /v1/auth/verify`** (ADR-0016 §5) — internal-only endpoint
+  registered exclusively on the mTLS-only ingest listener (not on `:8080`).
+  The gateway calls it to short-circuit invalid tokens before forwarding
+  writes across the firewall. Response carries `valid`, `caller_id`,
+  `kind`, `scopes`, `bound_cloud_account_id`. Rate-limited at argosd to
+  100 req/s per source IP (burst 200) via the new `api.VerifyRateLimiter`.
+  The `token` field in captured request bodies is scrubbed by the audit
+  middleware.
+- **`audit_events.source` column** (migration `00027_audit_events_source.sql`)
+  — distinguishes `api` (public listener), `ingest_gw` (mTLS ingest
+  listener, DMZ-origin writes), and `system` (synthetic argosd-emitted
+  events). Empty strings in pre-ADR-0016 rows are treated as `api` for
+  backwards compatibility. `AuditMiddleware` now accepts a `source` string
+  argument; existing call sites pass `"api"`, the ingest-listener wiring
+  passes `"ingest_gw"`. `GET /v1/admin/audit` accepts an optional `source`
+  query parameter.
+- **Gateway Prometheus metrics** — new metrics on the gateway's private
+  registry: `argos_ingest_gw_requests_total{method,route,status_class,outcome}`,
+  `argos_ingest_gw_request_duration_seconds`, `argos_ingest_gw_upstream_duration_seconds`,
+  `argos_ingest_gw_token_verify_total{result}`,
+  `argos_ingest_gw_token_cache_total{event}`, `argos_ingest_gw_token_cache_size`,
+  `argos_ingest_gw_cert_not_after_seconds`, `argos_ingest_gw_cert_reload_total{result}`,
+  `argos_ingest_gw_body_bytes`, `argos_ingest_gw_inflight_requests`,
+  `argos_ingest_gw_build_info`. Argosd gains `argos_auth_verify_total{result}`
+  and `argos_ingest_listener_client_cert_failures_total{reason}`.
+
+### Changed
+
+- **`POST /v1/clusters` is now idempotent on `name`** (ADR-0016 §6) —
+  `api.Store.EnsureCluster` replaces `CreateCluster`. A new row returns
+  `201 Created`; an existing row returns `200 OK` with the existing record
+  (request body ignored on hit). The collector no longer issues a startup
+  `GET /v1/clusters?name=…` — it unconditionally POSTs and follows up with
+  PATCH regardless of the 200/201 response. One round-trip removed from
+  every collector startup, for all deployments, whether or not the gateway
+  is in play.
+- **`api.NewServer` signature** — gains a `verifyLimiter *VerifyRateLimiter`
+  parameter (pass nil to disable rate limiting, e.g. in test fixtures).
+- **`api.AuditMiddleware` signature** — gains a `source string` parameter
+  (`"api"` or `"ingest_gw"`); callers must update.
+
+### Migration
+
+Migration `00027_audit_events_source.sql` adds a nullable `source` column
+to `audit_events`. The `ARGOS_AUTO_MIGRATE=true` default applies it on
+startup. Rows inserted by the previous version carry a NULL source; queries
+treat NULL as `"api"` for backwards compatibility.
+
+`api.AuditMiddleware` now requires a `source` argument. Any code outside
+`cmd/argosd/main.go` that constructs a middleware chain must be updated to
+pass `"api"` or the appropriate source string.
+
+`api.NewServer` requires the new `verifyLimiter` argument; pass
+`api.NewVerifyRateLimiter()` in production and nil in tests.
+
+No changes to existing API consumers. The new `200` status from
+`POST /v1/clusters` is additive; clients treating `201` as the only
+success code should be updated to also accept `200`, but the old behaviour
+(checking for the row's existence first and then POSTing) still works
+through the `PATCH` path.
+
 ## [0.10.0] — 2026-04-26
 
 Helm chart 0.12.0 / appVersion 0.10.0. Adds the VM-collector track from
