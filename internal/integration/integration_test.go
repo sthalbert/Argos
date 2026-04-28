@@ -1108,16 +1108,31 @@ func TestErrorPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("POST cluster with duplicate name returns 409", func(t *testing.T) {
-		resp := env.doReq(t, http.MethodPost, "/v1/clusters", `{"name":"dup-cluster"}`)
-		_ = resp.Body.Close()
-		var problem api.Problem
-		s := env.doJSON(t, http.MethodPost, "/v1/clusters", `{"name":"dup-cluster"}`, &problem)
-		if s != http.StatusConflict {
-			t.Fatalf("expected 409, got %d", s)
+	t.Run("POST cluster with duplicate name is idempotent (200 with existing row)", func(t *testing.T) {
+		// ADR-0016 §6: POST /v1/clusters is idempotent on `name`. First
+		// call returns 201 with the new row; subsequent calls with the
+		// same name return 200 with the existing row unchanged. This
+		// replaces the previous 409-on-duplicate behaviour so push-mode
+		// collectors behind the DMZ ingest gateway can bootstrap with
+		// POST-only (no read endpoints in the strict-write-only allowlist).
+		var first api.Cluster
+		s := env.doJSON(t, http.MethodPost, "/v1/clusters", `{"name":"dup-cluster"}`, &first)
+		if s != http.StatusCreated {
+			t.Fatalf("first POST: expected 201, got %d", s)
 		}
-		if problem.Status != 409 {
-			t.Errorf("expected problem status 409, got %d", problem.Status)
+		if first.Id == nil {
+			t.Fatalf("first POST: response missing id")
+		}
+		var second api.Cluster
+		s = env.doJSON(t, http.MethodPost, "/v1/clusters", `{"name":"dup-cluster"}`, &second)
+		if s != http.StatusOK {
+			t.Fatalf("second POST: expected 200, got %d", s)
+		}
+		if second.Id == nil || *second.Id != *first.Id {
+			t.Fatalf("second POST: expected same id %v, got %v", first.Id, second.Id)
+		}
+		if second.Name != first.Name {
+			t.Errorf("second POST: name = %q, want %q", second.Name, first.Name)
 		}
 	})
 
