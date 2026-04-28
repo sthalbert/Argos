@@ -166,27 +166,21 @@ func newFakeStore() *fakeStore {
 }
 
 //nolint:gocritic // hugeParam: signature matches CmdbStore interface
-func (s *fakeStore) CreateCluster(_ context.Context, in api.ClusterCreate) (api.Cluster, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	id := uuid.New()
-	c := api.Cluster{Id: &id, Name: in.Name}
-	s.clusters = append(s.clusters, c)
-	return c, nil
-}
-
-func (s *fakeStore) GetClusterByName(_ context.Context, name string) (api.Cluster, error) {
+func (s *fakeStore) EnsureCluster(_ context.Context, in api.ClusterCreate) (api.Cluster, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.listErr != nil {
-		return api.Cluster{}, s.listErr
+		return api.Cluster{}, false, s.listErr
 	}
 	for i := range s.clusters {
-		if s.clusters[i].Name == name {
-			return s.clusters[i], nil
+		if s.clusters[i].Name == in.Name {
+			return s.clusters[i], false, nil
 		}
 	}
-	return api.Cluster{}, api.ErrNotFound
+	id := uuid.New()
+	c := api.Cluster{Id: &id, Name: in.Name}
+	s.clusters = append(s.clusters, c)
+	return c, true, nil
 }
 
 //nolint:gocritic // hugeParam: signature matches CmdbStore interface

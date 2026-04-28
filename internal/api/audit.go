@@ -64,7 +64,13 @@ func SetAuditDetails(ctx context.Context, details map[string]any) {
 // caller. Insertion failures are logged at ERROR but never surface
 // to the client: losing the CMDB because the audit table is briefly
 // unreachable would be a worse outcome than a gap in the log.
-func AuditMiddleware(recorder AuditRecorder) MiddlewareFunc {
+//
+// `source` distinguishes which listener served the request — "api" for
+// argosd's public listener, "ingest_gw" for the mTLS-only listener
+// fronted by the DMZ gateway (ADR-0016). The label is passed through to
+// audit_events.source so operators can answer "what came through the
+// DMZ" with a single WHERE clause.
+func AuditMiddleware(recorder AuditRecorder, source string) MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !shouldAudit(r) {
@@ -91,6 +97,7 @@ func AuditMiddleware(recorder AuditRecorder) MiddlewareFunc {
 			next.ServeHTTP(rw, r)
 
 			ev := buildAuditEvent(r, rw.status, bodySnap)
+			ev.Source = source
 			// Merge handler-injected details (e.g., cascade snapshot).
 			if bag.details != nil {
 				if ev.Details == nil {

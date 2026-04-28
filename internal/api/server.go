@@ -38,19 +38,36 @@ func validateRunbookURL(raw *string) error {
 
 // Server implements StrictServerInterface for the Argos REST API.
 type Server struct {
-	version      string
-	store        Store
-	cookiePolicy auth.SecureCookiePolicy
-	oidc         *auth.OIDCProvider // nil when OIDC is not configured
-	loginLimiter *LoginRateLimiter  // per-IP login rate limiter (ADR-0007 IMP-009)
+	version       string
+	store         Store
+	cookiePolicy  auth.SecureCookiePolicy
+	oidc          *auth.OIDCProvider // nil when OIDC is not configured
+	loginLimiter  *LoginRateLimiter  // per-IP login rate limiter (ADR-0007 IMP-009)
+	verifyLimiter *VerifyRateLimiter // per-IP rate limit on the ingest verify endpoint (ADR-0016 §5)
 }
 
 // NewServer wires the handlers with a persistence backend and the build
 // version reported on health probes. `cookiePolicy` governs the Secure
 // flag on session cookies (see ADR-0007); auto = mirror request scheme.
-// `oidc` may be nil to disable the OIDC flow entirely.
-func NewServer(version string, store Store, cookiePolicy auth.SecureCookiePolicy, oidc *auth.OIDCProvider, loginLimiter *LoginRateLimiter) *Server {
-	return &Server{version: version, store: store, cookiePolicy: cookiePolicy, oidc: oidc, loginLimiter: loginLimiter}
+// `oidc` may be nil to disable the OIDC flow entirely. `verifyLimiter`
+// gates POST /v1/auth/verify (ADR-0016 §5); pass nil to disable rate
+// limiting (test fixtures usually do).
+func NewServer(
+	version string,
+	store Store,
+	cookiePolicy auth.SecureCookiePolicy,
+	oidc *auth.OIDCProvider,
+	loginLimiter *LoginRateLimiter,
+	verifyLimiter *VerifyRateLimiter,
+) *Server {
+	return &Server{
+		version:       version,
+		store:         store,
+		cookiePolicy:  cookiePolicy,
+		oidc:          oidc,
+		loginLimiter:  loginLimiter,
+		verifyLimiter: verifyLimiter,
+	}
 }
 
 var _ StrictServerInterface = (*Server)(nil)
@@ -147,7 +164,12 @@ func (s *Server) ListClusters(ctx context.Context, req ListClustersRequestObject
 	return ListClusters200JSONResponse(resp), nil
 }
 
-// CreateCluster registers a new cluster.
+// CreateCluster registers a cluster idempotently on its name.
+//
+// On insert: returns 201 Created with the new row. On hit (a cluster with the
+// same name already exists): returns 200 OK with the existing row unchanged.
+// The request body is ignored on hit — callers wanting to update fields on
+// an existing cluster must follow up with PATCH /v1/clusters/{id}.
 func (s *Server) CreateCluster(ctx context.Context, req CreateClusterRequestObject) (CreateClusterResponseObject, error) {
 	body := *req.Body
 	if body.Name == "" {
@@ -161,13 +183,8 @@ func (s *Server) CreateCluster(ctx context.Context, req CreateClusterRequestObje
 		}, nil
 	}
 
-	c, err := s.store.CreateCluster(ctx, body)
+	c, created, err := s.store.EnsureCluster(ctx, body)
 	if err != nil {
-		if errors.Is(err, ErrConflict) {
-			return CreateCluster409ApplicationProblemPlusJSONResponse{
-				ConflictApplicationProblemPlusJSONResponse(problemConflict(err)),
-			}, nil
-		}
 		return nil, fmt.Errorf("createCluster: %w", err)
 	}
 	c = withClusterLayer(c)
@@ -176,9 +193,15 @@ func (s *Server) CreateCluster(ctx context.Context, req CreateClusterRequestObje
 	if c.Id != nil {
 		loc += c.Id.String()
 	}
-	return CreateCluster201JSONResponse{
+	if created {
+		return CreateCluster201JSONResponse{
+			Body:    c,
+			Headers: CreateCluster201ResponseHeaders{Location: loc},
+		}, nil
+	}
+	return CreateCluster200JSONResponse{
 		Body:    c,
-		Headers: CreateCluster201ResponseHeaders{Location: loc},
+		Headers: CreateCluster200ResponseHeaders{Location: loc},
 	}, nil
 }
 

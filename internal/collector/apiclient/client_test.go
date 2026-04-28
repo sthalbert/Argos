@@ -33,14 +33,16 @@ func newTestStore(t *testing.T, srv *httptest.Server, extraHeaders map[string]st
 
 func TestBearerTokenInjected(t *testing.T) {
 	var gotAuth string
+	id := uuid.New()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
-		_ = json.NewEncoder(w).Encode(api.ClusterList{Items: []api.Cluster{{}}})
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(api.Cluster{Id: &id, Name: "test"})
 	}))
 	defer srv.Close()
 
 	s := newTestStore(t, srv, nil)
-	_, _ = s.GetClusterByName(context.Background(), "test")
+	_, _, _ = s.EnsureCluster(context.Background(), api.ClusterCreate{Name: "test"})
 
 	if gotAuth != "Bearer test-token" {
 		t.Errorf("expected 'Bearer test-token', got %q", gotAuth)
@@ -49,10 +51,12 @@ func TestBearerTokenInjected(t *testing.T) {
 
 func TestExtraHeadersInjected(t *testing.T) {
 	var gotTenant, gotRoute string
+	id := uuid.New()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotTenant = r.Header.Get("X-Tenant-Id")
 		gotRoute = r.Header.Get("X-Route-Key")
-		_ = json.NewEncoder(w).Encode(api.ClusterList{Items: []api.Cluster{{}}})
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(api.Cluster{Id: &id, Name: "test"})
 	}))
 	defer srv.Close()
 
@@ -60,7 +64,7 @@ func TestExtraHeadersInjected(t *testing.T) {
 		"X-Tenant-Id": "zad-prod",
 		"X-Route-Key": "argos",
 	})
-	_, _ = s.GetClusterByName(context.Background(), "test")
+	_, _, _ = s.EnsureCluster(context.Background(), api.ClusterCreate{Name: "test"})
 
 	if gotTenant != "zad-prod" {
 		t.Errorf("X-Tenant-Id: want 'zad-prod', got %q", gotTenant)
@@ -72,9 +76,11 @@ func TestExtraHeadersInjected(t *testing.T) {
 
 func TestBasePathPrepended(t *testing.T) {
 	var gotPath string
+	id := uuid.New()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.RequestURI()
-		_ = json.NewEncoder(w).Encode(api.ClusterList{Items: []api.Cluster{{}}})
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(api.Cluster{Id: &id, Name: "prod"})
 	}))
 	defer srv.Close()
 
@@ -87,24 +93,80 @@ func TestBasePathPrepended(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _ = s.GetClusterByName(context.Background(), "prod")
+	_, _, _ = s.EnsureCluster(context.Background(), api.ClusterCreate{Name: "prod"})
 
-	want := "/argos/v1/clusters?name=prod&limit=1"
+	want := "/argos/v1/clusters"
 	if gotPath != want {
 		t.Errorf("path: want %q, got %q", want, gotPath)
 	}
 }
 
-func TestGetClusterByNameNotFound(t *testing.T) {
+func TestEnsureClusterCreated(t *testing.T) {
+	id := uuid.New()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(api.ClusterList{Items: []api.Cluster{}})
+		if r.Method != http.MethodPost {
+			t.Errorf("method: want POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/v1/clusters" {
+			t.Errorf("path: want /v1/clusters, got %s", r.URL.Path)
+		}
+		var body api.ClusterCreate
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		if body.Name != "new-cluster" {
+			t.Errorf("body.Name: want 'new-cluster', got %q", body.Name)
+		}
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(api.Cluster{Id: &id, Name: "new-cluster"})
 	}))
 	defer srv.Close()
 
 	s := newTestStore(t, srv, nil)
-	_, err := s.GetClusterByName(context.Background(), "missing")
-	if err != api.ErrNotFound {
-		t.Errorf("expected ErrNotFound, got %v", err)
+	cluster, created, err := s.EnsureCluster(context.Background(), api.ClusterCreate{Name: "new-cluster"})
+	if err != nil {
+		t.Fatalf("EnsureCluster: %v", err)
+	}
+	if !created {
+		t.Error("created: want true on 201, got false")
+	}
+	if cluster.Name != "new-cluster" {
+		t.Errorf("cluster.Name: want 'new-cluster', got %q", cluster.Name)
+	}
+}
+
+func TestEnsureClusterExisting(t *testing.T) {
+	id := uuid.New()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(api.Cluster{Id: &id, Name: "existing"})
+	}))
+	defer srv.Close()
+
+	s := newTestStore(t, srv, nil)
+	cluster, created, err := s.EnsureCluster(context.Background(), api.ClusterCreate{Name: "existing"})
+	if err != nil {
+		t.Fatalf("EnsureCluster: %v", err)
+	}
+	if created {
+		t.Error("created: want false on 200, got true")
+	}
+	if cluster.Name != "existing" {
+		t.Errorf("cluster.Name: want 'existing', got %q", cluster.Name)
+	}
+}
+
+func TestEnsureClusterErrorOn4xx(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"invalid token"}`))
+	}))
+	defer srv.Close()
+
+	s := newTestStore(t, srv, nil)
+	_, _, err := s.EnsureCluster(context.Background(), api.ClusterCreate{Name: "x"})
+	if err == nil {
+		t.Fatal("expected error on 401, got nil")
 	}
 }
 
@@ -208,6 +270,7 @@ func TestReconcileWorkloadsMethod(t *testing.T) {
 
 func TestRetryOn5xx(t *testing.T) {
 	var calls atomic.Int32
+	id := uuid.New()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c := calls.Add(1)
 		if c < 3 {
@@ -215,12 +278,13 @@ func TestRetryOn5xx(t *testing.T) {
 			_, _ = w.Write([]byte(`{"error":"gateway timeout"}`))
 			return
 		}
-		_ = json.NewEncoder(w).Encode(api.ClusterList{Items: []api.Cluster{{}}})
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(api.Cluster{Id: &id, Name: "retry-test"})
 	}))
 	defer srv.Close()
 
 	s := newTestStore(t, srv, nil)
-	_, err := s.GetClusterByName(context.Background(), "retry-test")
+	_, _, err := s.EnsureCluster(context.Background(), api.ClusterCreate{Name: "retry-test"})
 	if err != nil {
 		t.Fatalf("expected success after retries, got %v", err)
 	}
@@ -239,7 +303,7 @@ func TestNoRetryOn401(t *testing.T) {
 	defer srv.Close()
 
 	s := newTestStore(t, srv, nil)
-	_, err := s.GetClusterByName(context.Background(), "no-retry")
+	_, _, err := s.EnsureCluster(context.Background(), api.ClusterCreate{Name: "no-retry"})
 	if err == nil {
 		t.Fatal("expected error on 401")
 	}

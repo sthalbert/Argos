@@ -57,9 +57,16 @@ type Store interface {
 	// Ping verifies that the underlying database is reachable.
 	Ping(ctx context.Context) error
 
-	// CreateCluster inserts a new cluster. Returns ErrConflict if a cluster
-	// with the same name already exists.
-	CreateCluster(ctx context.Context, in ClusterCreate) (Cluster, error)
+	// EnsureCluster inserts a cluster if no row with the same name exists, or
+	// returns the existing row unchanged when one does. The created flag is
+	// true when a new row was inserted, false when an existing row was
+	// returned. The request body is ignored on hit — callers wanting to
+	// update fields on an existing cluster must follow up with UpdateCluster.
+	//
+	// EnsureCluster never returns ErrConflict; concurrent inserts of the same
+	// name are serialised at the database via INSERT ... ON CONFLICT DO
+	// NOTHING, falling back to a SELECT for the losing writer.
+	EnsureCluster(ctx context.Context, in ClusterCreate) (cluster Cluster, created bool, err error)
 
 	// GetCluster fetches a cluster by id. Returns ErrNotFound if absent.
 	GetCluster(ctx context.Context, id uuid.UUID) (Cluster, error)
@@ -595,9 +602,16 @@ type AuditEventInsert struct {
 	HTTPMethod    string
 	HTTPPath      string
 	HTTPStatus    int
-	SourceIP      string
-	UserAgent     string
-	Details       map[string]any // JSONB payload, nil-friendly
+	// Source identifies which listener served the request:
+	//   "api"       — the public listener serving humans, admins, and trusted-zone collectors
+	//   "ingest_gw" — the mTLS-only ingest listener fronted by the DMZ gateway (ADR-0016)
+	//   "system"    — synthetic events emitted by argosd itself, not driven by a request
+	// Empty string is treated as "api" for backwards compatibility with rows
+	// inserted before ADR-0016 added this column.
+	Source    string
+	SourceIP  string
+	UserAgent string
+	Details   map[string]any // JSONB payload, nil-friendly
 }
 
 // Settings holds runtime feature toggles stored in the single-row
@@ -622,6 +636,9 @@ type AuditEventFilter struct {
 	ResourceType *string
 	ResourceID   *string
 	Action       *string
-	Since        *time.Time
-	Until        *time.Time
+	// Source filters by listener — "api", "ingest_gw", or "system"
+	// (ADR-0016 §11). Nil = any source.
+	Source *string
+	Since  *time.Time
+	Until  *time.Time
 }

@@ -94,11 +94,11 @@ func nsNatKey(clusterID uuid.UUID, name string) string {
 
 func (m *memStore) Ping(_ context.Context) error { return m.pingErr }
 
-func (m *memStore) CreateCluster(_ context.Context, in ClusterCreate) (Cluster, error) { //nolint:gocritic // interface-mandated signature
+func (m *memStore) EnsureCluster(_ context.Context, in ClusterCreate) (Cluster, bool, error) { //nolint:gocritic // interface-mandated signature
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, exists := m.byName[in.Name]; exists {
-		return Cluster{}, fmt.Errorf("duplicate: %w", ErrConflict)
+	if existingID, exists := m.byName[in.Name]; exists {
+		return m.byID[existingID], false, nil
 	}
 	id := uuid.New()
 	now := time.Now().UTC().Add(time.Duration(m.createdN) * time.Nanosecond)
@@ -123,7 +123,7 @@ func (m *memStore) CreateCluster(_ context.Context, in ClusterCreate) (Cluster, 
 	}
 	m.byID[id] = c
 	m.byName[in.Name] = id
-	return c, nil
+	return c, true, nil
 }
 
 func (m *memStore) GetCluster(_ context.Context, id uuid.UUID) (Cluster, error) {
@@ -1881,7 +1881,7 @@ func (m *memStore) DeletePersistentVolumeClaimsNotIn(_ context.Context, namespac
 func newTestHandler(t *testing.T, store Store) http.Handler {
 	t.Helper()
 	strict := NewStrictHandlerWithOptions(
-		NewServer("test", store, auth.SecureNever, nil, NewLoginRateLimiter()),
+		NewServer("test", store, auth.SecureNever, nil, NewLoginRateLimiter(), NewVerifyRateLimiter()),
 		[]StrictMiddlewareFunc{InjectRequestMiddleware},
 		StrictHTTPServerOptions{
 			RequestErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
@@ -1958,10 +1958,17 @@ func TestClusterCRUD(t *testing.T) { //nolint:gocyclo // end-to-end CRUD test ex
 		t.Fatal("created.Id is nil")
 	}
 
-	// Duplicate create → 409
+	// Duplicate create → 200 (existing cluster returned idempotently)
 	dup := do(h, http.MethodPost, "/v1/clusters", `{"name":"prod-eu-west-1"}`)
-	if dup.Code != http.StatusConflict {
-		t.Errorf("duplicate create status=%d", dup.Code)
+	if dup.Code != http.StatusOK {
+		t.Errorf("duplicate create status=%d, want 200", dup.Code)
+	}
+	var dupCluster Cluster
+	if err := json.Unmarshal(dup.Body.Bytes(), &dupCluster); err != nil {
+		t.Fatalf("decode duplicate response: %v", err)
+	}
+	if dupCluster.Id == nil || *dupCluster.Id != *created.Id {
+		t.Errorf("duplicate create returned different id: got %v, want %v", dupCluster.Id, created.Id)
 	}
 
 	// Get
@@ -2685,7 +2692,7 @@ func TestDeleteClusterAuditEnrichment(t *testing.T) { //nolint:gocyclo // end-to
 
 	// Build handler with audit middleware wrapping it.
 	strict := NewStrictHandlerWithOptions(
-		NewServer("test", store, auth.SecureNever, nil, NewLoginRateLimiter()),
+		NewServer("test", store, auth.SecureNever, nil, NewLoginRateLimiter(), NewVerifyRateLimiter()),
 		[]StrictMiddlewareFunc{InjectRequestMiddleware},
 		StrictHTTPServerOptions{
 			RequestErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
@@ -2696,7 +2703,7 @@ func TestDeleteClusterAuditEnrichment(t *testing.T) { //nolint:gocyclo // end-to
 			},
 		},
 	)
-	h := AuditMiddleware(store)(Handler(strict))
+	h := AuditMiddleware(store, "api")(Handler(strict))
 
 	// Create a cluster with curated metadata.
 	env := "production"

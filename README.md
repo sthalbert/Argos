@@ -22,7 +22,8 @@ A Configuration Management Database (CMDB) for Kubernetes environments, aligned 
 - **End-of-life inventory** -- enricher queries endoflife.date, flags EOL / approaching-EOL software, shows the latest available version to upgrade to.
 - **Impact analysis graph** -- interactive dependency diagram on every entity page; assess blast radius before a change.
 - **MCP server** -- Model Context Protocol interface exposing read-only CMDB tools for AI agents; SSE and stdio transports.
-- **Audit log** -- every state-changing call is recorded; passwords and tokens are scrubbed.
+- **DMZ ingest gateway** -- `argos-ingest-gw` reverse-proxy for collector push traffic behind a network perimeter; mTLS, hardcoded 18-route allowlist, 60 s token-verify cache (ADR-0016).
+- **Audit log** -- every state-changing call is recorded; passwords and tokens are scrubbed; `source` column distinguishes public-listener (`api`) from DMZ-gateway (`ingest_gw`) traffic.
 - **Embedded web UI** -- React SPA shipped inside the binary at `/ui/`.
 
 ## Quick start
@@ -60,6 +61,7 @@ See [Getting Started](docs/getting-started.md) for the full walkthrough includin
 | [Deploy with Kustomize](docs/deployment/kubernetes.md) | Production deployment with plain manifests. |
 | [Push Collector](docs/deployment/push-collector.md) | Deploy argos-collector in air-gapped clusters. |
 | [VM Collector](docs/vm-collector.md) | Deploy argos-vm-collector to inventory non-Kubernetes platform VMs. |
+| [DMZ Ingest Gateway](docs/how-to-deploy-dmz-ingest-gateway.md) | Deploy argos-ingest-gw in a perimeter network to front collector push traffic (ADR-0016). |
 | [Cloud Accounts](docs/cloud-accounts.md) | Register cloud-provider accounts, manage AK/SK rotation, master key handling. |
 | [Docker (local dev)](docs/deployment/docker.md) | Run locally with Docker. |
 | [Authentication](docs/authentication.md) | Local users, OIDC, tokens, roles, sessions. |
@@ -72,7 +74,7 @@ See [Getting Started](docs/getting-started.md) for the full walkthrough includin
 
 ## Architecture
 
-Argos ships as **two binaries**: `argosd` (the central server with API, UI, PostgreSQL store, and the in-process pull collectors) and `argos-vm-collector` (a standalone push-mode binary that polls cloud-provider APIs for non-Kubernetes platform VMs and pushes observations to argosd). The same push-mode pattern powers `argos-collector` for air-gapped Kubernetes clusters.
+Argos ships as **three binaries**: `argosd` (the central server with API, UI, PostgreSQL store, and the in-process pull collectors), `argos-vm-collector` (a standalone push-mode binary that polls cloud-provider APIs for non-Kubernetes platform VMs and pushes observations to argosd), and `argos-ingest-gw` (the optional DMZ ingest gateway that fronts argosd's mTLS-only ingest listener for high-security deployments — ADR-0016). The same push-mode pattern powers `argos-collector` for air-gapped Kubernetes clusters.
 
 ```
    Kubernetes cluster(s)        Air-gapped cluster        Cloud-provider account
@@ -112,6 +114,7 @@ Argos ships as **two binaries**: `argosd` (the central server with API, UI, Post
 | [0013](docs/adr/adr-0013-impact-analysis-graph.md) | Impact analysis graph for blast-radius assessment. |
 | [0014](docs/adr/adr-0014-mcp-server.md) | MCP server for AI agent access to the CMDB. |
 | [0015](docs/adr/adr-0015-vm-collector-for-non-kubernetes-platform-vms.md) | VM collector for non-Kubernetes platform infrastructure (cloud_accounts + virtual_machines + standalone collector binary). |
+| [0016](docs/adr/adr-0016-dmz-ingest-gateway.md) | DMZ ingest gateway for collector push traffic — stateless reverse-proxy with mTLS, 18-route allowlist, and 60 s token-verify cache. |
 
 ## Contributing
 

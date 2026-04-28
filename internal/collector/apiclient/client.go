@@ -127,28 +127,24 @@ func buildTransport(cfg *Config) (*http.Transport, error) {
 
 // ── collector.CmdbStore implementation ──────────────────────────────
 
-// CreateCluster registers a new cluster in the CMDB.
+// EnsureCluster registers a cluster in the CMDB if no row with the same name
+// exists, or returns the existing row unchanged when one does. The returned
+// bool is true when a new row was inserted (server response 201), false when
+// an existing row was returned (server response 200).
+//
+// EnsureCluster is the only cluster-bootstrap entry point on the apiclient
+// store: a push-mode collector behind the strict-write-only DMZ ingest
+// gateway (ADR-0016) cannot reach GET /v1/clusters, so the previous
+// GET-then-POST pattern is replaced by a single idempotent POST.
 //
 //nolint:gocritic // hugeParam: signature matches CmdbStore interface
-func (s *Store) CreateCluster(ctx context.Context, in api.ClusterCreate) (api.Cluster, error) {
+func (s *Store) EnsureCluster(ctx context.Context, in api.ClusterCreate) (api.Cluster, bool, error) {
 	var out api.Cluster
-	if err := s.doJSON(ctx, http.MethodPost, "/v1/clusters", in, &out); err != nil {
-		return api.Cluster{}, fmt.Errorf("create cluster: %w", err)
+	status, err := s.doJSONStatus(ctx, http.MethodPost, "/v1/clusters", in, &out)
+	if err != nil {
+		return api.Cluster{}, false, fmt.Errorf("ensure cluster: %w", err)
 	}
-	return out, nil
-}
-
-// GetClusterByName retrieves a cluster by its unique name.
-func (s *Store) GetClusterByName(ctx context.Context, name string) (api.Cluster, error) {
-	path := "/v1/clusters?name=" + url.QueryEscape(name) + "&limit=1"
-	var list api.ClusterList
-	if err := s.doJSON(ctx, http.MethodGet, path, nil, &list); err != nil {
-		return api.Cluster{}, fmt.Errorf("get cluster by name: %w", err)
-	}
-	if len(list.Items) == 0 {
-		return api.Cluster{}, api.ErrNotFound
-	}
-	return list.Items[0], nil
+	return out, status == http.StatusCreated, nil
 }
 
 // UpdateCluster applies a partial update to the cluster identified by id.
@@ -355,11 +351,20 @@ const (
 // JSON response into dst. Retries transient 5xx errors with exponential
 // backoff; returns immediately on 401/403.
 func (s *Store) doJSON(ctx context.Context, method, path string, body, dst any) error {
+	_, err := s.doJSONStatus(ctx, method, path, body, dst)
+	return err
+}
+
+// doJSONStatus is doJSON, but additionally returns the HTTP status code of
+// the final (successful or terminal) response. Callers that need to
+// distinguish between 200 and 201 (e.g. EnsureCluster) use this; everyone
+// else uses doJSON.
+func (s *Store) doJSONStatus(ctx context.Context, method, path string, body, dst any) (int, error) {
 	var marshaledBody []byte
 	if body != nil {
 		buf, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("marshal request body: %w", err)
+			return 0, fmt.Errorf("marshal request body: %w", err)
 		}
 		marshaledBody = buf
 	}
@@ -367,20 +372,22 @@ func (s *Store) doJSON(ctx context.Context, method, path string, body, dst any) 
 	fullURL := s.baseURL + path
 
 	var lastErr error
+	var lastStatus int
 	for attempt := range maxRetries {
-		result, err := s.doOnce(ctx, method, fullURL, marshaledBody, dst)
+		status, result, err := s.doOnce(ctx, method, fullURL, marshaledBody, dst)
 		if err != nil {
 			lastErr = err
+			lastStatus = status
 			if result == attemptDone || ctx.Err() != nil {
-				return lastErr
+				return lastStatus, lastErr
 			}
 			backoff(ctx, attempt)
 			continue
 		}
-		return nil
+		return status, nil
 	}
 
-	return fmt.Errorf("%w: %w", errMaxRetries, lastErr)
+	return lastStatus, fmt.Errorf("%w: %w", errMaxRetries, lastErr)
 }
 
 type attemptResult int
@@ -390,10 +397,12 @@ const (
 	attemptRetry               // transient failure, retry
 )
 
-// doOnce performs a single HTTP round-trip for doJSON.
+// doOnce performs a single HTTP round-trip for doJSON. The first return value
+// is the HTTP status code of the response (0 when the request never reached
+// the server, e.g. on a transport error).
 func (s *Store) doOnce(
 	ctx context.Context, method, fullURL string, marshaledBody []byte, dst any,
-) (attemptResult, error) {
+) (int, attemptResult, error) {
 	var bodyReader io.Reader
 	if marshaledBody != nil {
 		bodyReader = bytes.NewReader(marshaledBody)
@@ -401,7 +410,7 @@ func (s *Store) doOnce(
 
 	req, err := http.NewRequestWithContext(ctx, method, fullURL, bodyReader)
 	if err != nil {
-		return attemptDone, fmt.Errorf("build request: %w", err)
+		return 0, attemptDone, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+s.token)
 	if marshaledBody != nil {
@@ -413,16 +422,17 @@ func (s *Store) doOnce(
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return attemptRetry, fmt.Errorf("%s %s: %w", method, req.URL.Path, err)
+		return 0, attemptRetry, fmt.Errorf("%s %s: %w", method, req.URL.Path, err)
 	}
 
 	respBody, readErr := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
 	if readErr != nil {
-		return attemptRetry, fmt.Errorf("%s %s: read response: %w", method, req.URL.Path, readErr)
+		return resp.StatusCode, attemptRetry, fmt.Errorf("%s %s: read response: %w", method, req.URL.Path, readErr)
 	}
 
-	return s.handleResponse(method, req.URL.Path, resp.StatusCode, respBody, dst)
+	result, err := s.handleResponse(method, req.URL.Path, resp.StatusCode, respBody, dst)
+	return resp.StatusCode, result, err
 }
 
 // handleResponse interprets the HTTP status code and body returned by a

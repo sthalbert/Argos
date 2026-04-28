@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/sthalbert/argos/internal/auth"
+	"github.com/sthalbert/argos/internal/metrics"
 )
 
 // ── request-in-context plumbing ─────────────────────────────────────
@@ -502,6 +503,77 @@ func (s *Server) ChangePassword(ctx context.Context, request ChangePasswordReque
 	return changePassword204WithCookie{cookie: cookie}, nil
 }
 
+// VerifyToken re-runs the bearer-token argon2id check on a token presented
+// in the request body and returns the resulting caller identity. Used by
+// the DMZ ingest gateway (ADR-0016 §5) to short-circuit invalid tokens
+// before they cross the firewall into the trusted zone.
+//
+// This handler is registered ONLY on argosd's mTLS-only ingest listener
+// (see api.IngestMux). The mTLS handshake is the sole authentication for
+// the call itself — the request body's `token` field carries the PAT to
+// be verified, NOT the caller's identity. argosd never trusts the
+// outcome of this RPC for its own auth decisions; the gateway's cache
+// uses it purely as a DMZ-side filter, and every forwarded write is
+// re-verified by argosd's standard bearer middleware.
+//
+// Rate-limited at argosd to a per-source-IP budget (default 100 req/s,
+// burst 200) as a backstop in case the gateway's cache is bypassed.
+func (s *Server) VerifyToken(ctx context.Context, request VerifyTokenRequestObject) (VerifyTokenResponseObject, error) {
+	if request.Body == nil || request.Body.Token == "" {
+		metrics.IngestVerifyTotal("invalid")
+		return VerifyToken400ApplicationProblemPlusJSONResponse{
+			BadRequestApplicationProblemPlusJSONResponse(problemBadRequest("Missing field", "field 'token' is required")),
+		}, nil
+	}
+	if s.verifyLimiter != nil {
+		r := httpRequestFromCtx(ctx)
+		if !s.verifyLimiter.Allow(clientIP(r)) {
+			// Use the same generic detail string as the invalid-token
+			// path: a token-probing attacker must not be able to
+			// distinguish "you hit my rate limit" from "your guess
+			// was wrong". Rate-limited probes are still observable
+			// externally via timing, but at least the response body
+			// gives no oracle. The metric label still distinguishes
+			// the two for operators.
+			metrics.IngestVerifyTotal("rate_limited")
+			return VerifyToken401ApplicationProblemPlusJSONResponse{
+				problemUnauthorized("invalid token"),
+			}, nil
+		}
+	}
+
+	caller, err := auth.VerifyBearerToken(ctx, s.store, request.Body.Token)
+	if err != nil {
+		// Don't leak why — bad prefix, unknown row, hash mismatch, expired
+		// all collapse to a generic 401. The gateway's negative cache TTL
+		// + argosd's per-IP rate limit defend against guessing.
+		metrics.IngestVerifyTotal("invalid")
+		return VerifyToken401ApplicationProblemPlusJSONResponse{ //nolint:nilerr // 401 response shape
+			problemUnauthorized("invalid token"),
+		}, nil
+	}
+
+	metrics.IngestVerifyTotal("valid")
+	resp := VerifyTokenResponse{
+		Valid:               true,
+		Kind:                VerifyTokenResponseKindToken,
+		Scopes:              caller.Scopes,
+		BoundCloudAccountId: caller.BoundCloudAccountID,
+	}
+	id := caller.TokenID
+	resp.CallerId = &id
+	if caller.TokenName != "" {
+		name := caller.TokenName
+		resp.TokenName = &name
+	}
+	// Token expiry is enforced by the store (GetActiveTokenByPrefix
+	// filters expired rows out); the auth.APIToken view does not carry
+	// an expiry, so we leave Exp unset. The gateway's cache then uses
+	// its configured TTL (default 60s) as the only freshness bound,
+	// which is the documented revocation-lag SLA from ADR-0016.
+	return VerifyToken200JSONResponse(resp), nil
+}
+
 // ── /v1/admin/users ─────────────────────────────────────────────────
 
 // ListUsers returns a paged list of all users (admin view).
@@ -802,6 +874,11 @@ func (s *Server) ListAuditEvents(ctx context.Context, request ListAuditEventsReq
 		Action:       request.Params.Action,
 		Since:        request.Params.Since,
 		Until:        request.Params.Until,
+	}
+	if request.Params.Source != nil {
+		// Cast the codegen enum back to a plain string for the store filter.
+		s := string(*request.Params.Source)
+		filter.Source = &s
 	}
 	items, next, err := s.store.ListAuditEvents(ctx, filter, limit, cursor)
 	if err != nil {
