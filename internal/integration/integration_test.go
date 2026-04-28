@@ -1085,6 +1085,7 @@ func TestAuditLog(t *testing.T) {
 // TestErrorPaths
 // ---------------------------------------------------------------------------
 
+//nolint:gocyclo // table of independent error-path subtests; flat structure is clearer than factored helpers
 func TestErrorPaths(t *testing.T) {
 	env := newTestEnv(t)
 
