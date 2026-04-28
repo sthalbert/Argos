@@ -30,22 +30,48 @@ type CertReloader struct {
 	keyPath  string
 	cert     atomic.Pointer[tls.Certificate]
 	logger   *slog.Logger
+	stop     chan struct{}
+	done     chan struct{}
 }
 
 // NewCertReloader loads the cert/key pair at startup and starts an
 // fsnotify watcher on the cert's directory. The returned reloader's
 // GetClientCertificate / GetCertificate methods can be plugged directly
-// into a tls.Config. Cancel watching by calling Close.
+// into a tls.Config.
+//
+// Call Close to stop the watcher goroutine. Production code that runs
+// for the process lifetime can leave it running until exit; tests MUST
+// Close to avoid leaking goroutines that continue logging after the
+// test directory is removed.
 func NewCertReloader(certPath, keyPath string, logger *slog.Logger) (*CertReloader, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	r := &CertReloader{certPath: certPath, keyPath: keyPath, logger: logger}
+	r := &CertReloader{
+		certPath: certPath,
+		keyPath:  keyPath,
+		logger:   logger,
+		stop:     make(chan struct{}),
+		done:     make(chan struct{}),
+	}
 	if err := r.reload(); err != nil {
 		return nil, fmt.Errorf("initial keypair load: %w", err)
 	}
 	go r.watch()
 	return r, nil
+}
+
+// Close stops the fsnotify watcher goroutine and blocks until it exits.
+// Idempotent: a second Close is a no-op.
+func (r *CertReloader) Close() error {
+	select {
+	case <-r.stop:
+		// already closed
+	default:
+		close(r.stop)
+	}
+	<-r.done
+	return nil
 }
 
 // GetClientCertificate satisfies tls.Config.GetClientCertificate. The
@@ -108,6 +134,7 @@ func (r *CertReloader) reload() error {
 // and re-runs reload(). Failures are logged but never fatal — the
 // running cert keeps serving until the next successful reload.
 func (r *CertReloader) watch() { //nolint:gocyclo // fsnotify event loop; flat select is clearer than factored sub-handlers
+	defer close(r.done)
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		r.logger.Error("fsnotify init failed; cert hot-reload disabled",
@@ -129,6 +156,8 @@ func (r *CertReloader) watch() { //nolint:gocyclo // fsnotify event loop; flat s
 	var debounce <-chan time.Time
 	for {
 		select {
+		case <-r.stop:
+			return
 		case ev, ok := <-watcher.Events:
 			if !ok {
 				return

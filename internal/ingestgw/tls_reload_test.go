@@ -76,6 +76,7 @@ func TestCertReloader_InitialLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCertReloader: %v", err)
 	}
+	t.Cleanup(func() { _ = reloader.Close() })
 
 	cert, err := reloader.GetClientCertificate(nil)
 	if err != nil {
@@ -104,6 +105,7 @@ func TestCertReloader_GetCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCertReloader: %v", err)
 	}
+	t.Cleanup(func() { _ = reloader.Close() })
 
 	cert, err := reloader.GetCertificate(nil)
 	if err != nil {
@@ -127,6 +129,7 @@ func TestCertReloader_HotReload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCertReloader: %v", err)
 	}
+	t.Cleanup(func() { _ = reloader.Close() })
 
 	// Verify initial cert.
 	cert1, err := reloader.GetClientCertificate(&tls.CertificateRequestInfo{})
@@ -188,6 +191,7 @@ func TestCertReloader_CorruptCertRetainsPrevious(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCertReloader: %v", err)
 	}
+	t.Cleanup(func() { _ = reloader.Close() })
 
 	// Overwrite with corrupt PEM — reload() should fail.
 	atomicWrite(t, certPath, []byte("this is not a valid PEM certificate"))
