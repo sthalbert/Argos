@@ -60,6 +60,24 @@ make ui-build      # produces ui/dist/
 make build         # argosd binary embeds ui/dist via //go:embed
 ```
 
+## Tests
+
+The UI is covered by a Vitest suite — foundation tests over `api.ts`,
+`hooks.ts`, `kv.ts`, `me.tsx`, and shared components, plus
+render-level smoke tests for every page. The network is mocked with
+[MSW](https://mswjs.io/); default handlers live in
+`src/test/handlers.ts` and tests override them per-case.
+
+```bash
+make ui-test         # one-shot, used by CI and `make check`
+cd ui && npm run test:watch     # interactive
+cd ui && npm run test:coverage  # writes coverage/ HTML report
+```
+
+Test files are co-located next to the unit they cover (`foo.tsx` →
+`foo.test.tsx`). Shared infrastructure (MSW server, fixtures, render
+helper) lives in `src/test/`.
+
 ## Skipping the UI
 
 Backend-only workflows (no Node toolchain) can use `make build-noui`. `/ui/`
