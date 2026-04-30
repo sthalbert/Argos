@@ -877,7 +877,7 @@ export interface VMBlockDevice {
 
 // VMApplication is an operator-declared application running on a VM
 // (ADR-0019). The EOL enricher consumes the (product, version) pair to
-// write argos.io/eol.<product> annotations, so the catalog drives the
+// write longue-vue.io/eol.<product> annotations, so the catalog drives the
 // lifecycle scan.
 export interface VMApplication {
   product: string;

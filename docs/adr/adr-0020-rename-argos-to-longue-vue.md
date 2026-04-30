@@ -34,7 +34,7 @@ The rename touches every layer:
 - Docker image names (`ghcr.io/sthalbert/argos*` → `ghcr.io/sthalbert/longue-vue*`)
 - Environment variables (`LONGUE_VUE_*` → `LONGUE_VUE_*`)
 - Prometheus metric namespace (`argos_*` → `longue_vue_*`)
-- Kubernetes annotation domain (`argos.io/*` → `longue-vue.io/*`)
+- Kubernetes annotation domain (`longue-vue.io/*` → `longue-vue.io/*`)
 - Session cookie (`argos_session` → `longue_vue_session`)
 - HTTP custom headers (`X-Argos-Verified-*` → `X-Longue-Vue-Verified-*`)
 - PAT prefix (`argos_pat_*` → `longue_vue_pat_*`) — see §Decision below

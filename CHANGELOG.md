@@ -88,7 +88,7 @@ a distinct-applications endpoint for autocomplete.
   only `PATCH /v1/virtual-machines/{id}` does.
 - **EOL enrichment for VM applications** (ADR-0019 §2) — the `internal/eol/`
   enricher gains a third pass, `enrichVirtualMachines`, that walks every
-  non-terminated VM's `applications` list and writes `argos.io/eol.<product>`
+  non-terminated VM's `applications` list and writes `longue-vue.io/eol.<product>`
   annotations using the same endoflife.date lookup used for clusters and nodes.
   Products not on endoflife.date receive a stub annotation with
   `eol_status=unknown` so operators see the row was evaluated rather than
@@ -139,7 +139,7 @@ a distinct-applications endpoint for autocomplete.
   The URL slug and browser title are updated; existing bookmarks using the old
   slug continue to work via a redirect.
 - **EOL dashboard at `/ui/eol` now includes VMs as an entity dimension** —
-  the aggregator reads `argos.io/eol.*` annotations from `virtual_machines`
+  the aggregator reads `longue-vue.io/eol.*` annotations from `virtual_machines`
   alongside clusters and nodes. A new "Type" column (cluster / node / vm) and
   a corresponding filter chip appear in the summary card row. Row-level
   red/orange highlighting and the two-column-group layout ("What we run" /
@@ -463,7 +463,7 @@ binary.
   `already_inventoried_as_kubernetes_node` on hit; the collector
   skips. Tag-independent — works for any cloud-controller-manager.
   Local pre-filter on `OscK8sClusterID/*` / `OscK8sNodeName=*` /
-  `argos.io/ignore=true` saves the round-trip per kube worker.
+  `longue-vue.io/ignore=true` saves the round-trip per kube worker.
 - **New endpoints** (ADR-0015 §IMP-006):
   - `POST /v1/admin/cloud-accounts`,
     `GET /v1/admin/cloud-accounts`,

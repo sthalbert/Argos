@@ -26,7 +26,7 @@ This plan touches ~219 files. Files reorganized by responsibility:
 
 **New files:**
 - `docs/adr/adr-0020-rename-argos-to-longue-vue.md` — records the rename decision + PAT dual-prefix strategy
-- `migrations/00029_strip_argos_io_annotations.sql` — strips legacy `argos.io/*` keys from JSONB annotation columns
+- `migrations/00029_strip_argos_io_annotations.sql` — strips legacy `longue-vue.io/*` keys from JSONB annotation columns
 
 **Modified files (one-line summaries of responsibilities; full code in tasks below):**
 - `go.mod` — module path
@@ -113,7 +113,7 @@ The rename touches every layer:
 - Docker image names (`ghcr.io/sthalbert/argos*` → `ghcr.io/sthalbert/longue-vue*`)
 - Environment variables (`LONGUE_VUE_*` → `LONGUE_VUE_*`)
 - Prometheus metric namespace (`argos_*` → `longue_vue_*`)
-- Kubernetes annotation domain (`argos.io/*` → `longue-vue.io/*`)
+- Kubernetes annotation domain (`longue-vue.io/*` → `longue-vue.io/*`)
 - Session cookie (`argos_session` → `longue_vue_session`)
 - HTTP custom headers (`X-Argos-Verified-*` → `X-Longue-Vue-Verified-*`)
 - PAT prefix (`argos_pat_*` → `longue_vue_pat_*`) — see §Decision below
@@ -639,9 +639,9 @@ go test -count=1 -race ./internal/auth/...
 
 Expected: pass. (PAT tests in `tokens_test.go` use `argos_pat_*` literals — they will still pass because Phase 5 hasn't yet introduced dual-prefix support; the existing parser still accepts the legacy prefix.)
 
-### Task 4.7: Update vmcollector filter for argos.io/ignore — DEFERRED to Phase 6
+### Task 4.7: Update vmcollector filter for longue-vue.io/ignore — DEFERRED to Phase 6
 
-The `argos.io/ignore` annotation read in `internal/vmcollector/filter/filter.go` is renamed in Phase 6 alongside the rest of the annotation domain change. Don't touch it here.
+The `longue-vue.io/ignore` annotation read in `internal/vmcollector/filter/filter.go` is renamed in Phase 6 alongside the rest of the annotation domain change. Don't touch it here.
 
 ### Task 4.8: Commit Phase 4
 
@@ -870,7 +870,7 @@ git -c commit.gpgsign=false commit -m "feat(auth): accept legacy argos_pat_ toke
 
 ---
 
-## Phase 6 — Annotation domain argos.io → longue-vue.io (with DB migration)
+## Phase 6 — Annotation domain longue-vue.io → longue-vue.io (with DB migration)
 
 ### Task 6.1: Update the EOL enricher annotation prefix
 
@@ -881,21 +881,21 @@ git -c commit.gpgsign=false commit -m "feat(auth): accept legacy argos_pat_ toke
 - [ ] **Step 1: Edit the constant**
 
 ```diff
--const annotationPrefix = "argos.io/eol."
+-const annotationPrefix = "longue-vue.io/eol."
 +const annotationPrefix = "longue-vue.io/eol."
 ```
 
 - [ ] **Step 2: Update doc comments in the same file**
 
 ```bash
-sed -i '' 's|argos.io/eol|longue-vue.io/eol|g' internal/eol/enricher.go
+sed -i '' 's|longue-vue.io/eol|longue-vue.io/eol|g' internal/eol/enricher.go
 ```
 
 - [ ] **Step 3: Update test fixtures**
 
 ```bash
-sed -i '' 's|argos.io/eol|longue-vue.io/eol|g' internal/eol/enricher_test.go
-sed -i '' 's|"argos.io/|"longue-vue.io/|g' internal/eol/enricher_test.go
+sed -i '' 's|longue-vue.io/eol|longue-vue.io/eol|g' internal/eol/enricher_test.go
+sed -i '' 's|"longue-vue.io/|"longue-vue.io/|g' internal/eol/enricher_test.go
 ```
 
 - [ ] **Step 4: Run the enricher tests**
@@ -912,7 +912,7 @@ Expected: pass.
 - Modify: `internal/vmcollector/filter/filter.go`
 - Modify: `internal/vmcollector/filter/filter_test.go` (if it exists)
 
-- [ ] **Step 1: Replace `argos.io/ignore` with `longue-vue.io/ignore`**
+- [ ] **Step 1: Replace `longue-vue.io/ignore` with `longue-vue.io/ignore`**
 
 ```bash
 grep -rln 'argos\.io/ignore' internal/vmcollector/ | xargs sed -i '' 's|argos\.io/ignore|longue-vue.io/ignore|g'
@@ -943,14 +943,14 @@ Expected: pass.
 - [ ] **Step 1: Edit EolDashboard.tsx**
 
 ```diff
--const EOL_PREFIX = 'argos.io/eol.';
+-const EOL_PREFIX = 'longue-vue.io/eol.';
 +const EOL_PREFIX = 'longue-vue.io/eol.';
 ```
 
 - [ ] **Step 2: Update the AnnotationsCard test fixture**
 
 ```bash
-sed -i '' "s|'argos.io/|'longue-vue.io/|g" ui/src/components/inventory/AnnotationsCard.test.tsx
+sed -i '' "s|'longue-vue.io/|'longue-vue.io/|g" ui/src/components/inventory/AnnotationsCard.test.tsx
 ```
 
 - [ ] **Step 3: Run vitest**
@@ -972,139 +972,139 @@ Expected: pass.
 -- +goose Up
 -- +goose StatementBegin
 
--- Strip every legacy `argos.io/*` key from annotations JSONB columns.
+-- Strip every legacy `longue-vue.io/*` key from annotations JSONB columns.
 -- The EOL enricher (next tick) repopulates the new `longue-vue.io/eol.*`
--- keys; user-curated keys like `argos.io/ignore` must be re-applied on the
+-- keys; user-curated keys like `longue-vue.io/ignore` must be re-applied on the
 -- source resources by operators per ADR-0020. This migration is irreversible
--- because the `argos.io/*` keys cannot be reconstructed from the surviving
+-- because the `longue-vue.io/*` keys cannot be reconstructed from the surviving
 -- columns.
 
 UPDATE clusters
 SET annotations = COALESCE((
     SELECT jsonb_object_agg(key, value)
     FROM jsonb_each(annotations)
-    WHERE key NOT LIKE 'argos.io/%'
+    WHERE key NOT LIKE 'longue-vue.io/%'
 ), '{}'::jsonb)
 WHERE annotations IS NOT NULL
   AND EXISTS (
-      SELECT 1 FROM jsonb_object_keys(annotations) k WHERE k LIKE 'argos.io/%'
+      SELECT 1 FROM jsonb_object_keys(annotations) k WHERE k LIKE 'longue-vue.io/%'
   );
 
 UPDATE namespaces
 SET annotations = COALESCE((
     SELECT jsonb_object_agg(key, value)
     FROM jsonb_each(annotations)
-    WHERE key NOT LIKE 'argos.io/%'
+    WHERE key NOT LIKE 'longue-vue.io/%'
 ), '{}'::jsonb)
 WHERE annotations IS NOT NULL
   AND EXISTS (
-      SELECT 1 FROM jsonb_object_keys(annotations) k WHERE k LIKE 'argos.io/%'
+      SELECT 1 FROM jsonb_object_keys(annotations) k WHERE k LIKE 'longue-vue.io/%'
   );
 
 UPDATE nodes
 SET annotations = COALESCE((
     SELECT jsonb_object_agg(key, value)
     FROM jsonb_each(annotations)
-    WHERE key NOT LIKE 'argos.io/%'
+    WHERE key NOT LIKE 'longue-vue.io/%'
 ), '{}'::jsonb)
 WHERE annotations IS NOT NULL
   AND EXISTS (
-      SELECT 1 FROM jsonb_object_keys(annotations) k WHERE k LIKE 'argos.io/%'
+      SELECT 1 FROM jsonb_object_keys(annotations) k WHERE k LIKE 'longue-vue.io/%'
   );
 
 UPDATE workloads
 SET annotations = COALESCE((
     SELECT jsonb_object_agg(key, value)
     FROM jsonb_each(annotations)
-    WHERE key NOT LIKE 'argos.io/%'
+    WHERE key NOT LIKE 'longue-vue.io/%'
 ), '{}'::jsonb)
 WHERE annotations IS NOT NULL
   AND EXISTS (
-      SELECT 1 FROM jsonb_object_keys(annotations) k WHERE k LIKE 'argos.io/%'
+      SELECT 1 FROM jsonb_object_keys(annotations) k WHERE k LIKE 'longue-vue.io/%'
   );
 
 UPDATE pods
 SET annotations = COALESCE((
     SELECT jsonb_object_agg(key, value)
     FROM jsonb_each(annotations)
-    WHERE key NOT LIKE 'argos.io/%'
+    WHERE key NOT LIKE 'longue-vue.io/%'
 ), '{}'::jsonb)
 WHERE annotations IS NOT NULL
   AND EXISTS (
-      SELECT 1 FROM jsonb_object_keys(annotations) k WHERE k LIKE 'argos.io/%'
+      SELECT 1 FROM jsonb_object_keys(annotations) k WHERE k LIKE 'longue-vue.io/%'
   );
 
 UPDATE services
 SET annotations = COALESCE((
     SELECT jsonb_object_agg(key, value)
     FROM jsonb_each(annotations)
-    WHERE key NOT LIKE 'argos.io/%'
+    WHERE key NOT LIKE 'longue-vue.io/%'
 ), '{}'::jsonb)
 WHERE annotations IS NOT NULL
   AND EXISTS (
-      SELECT 1 FROM jsonb_object_keys(annotations) k WHERE k LIKE 'argos.io/%'
+      SELECT 1 FROM jsonb_object_keys(annotations) k WHERE k LIKE 'longue-vue.io/%'
   );
 
 UPDATE ingresses
 SET annotations = COALESCE((
     SELECT jsonb_object_agg(key, value)
     FROM jsonb_each(annotations)
-    WHERE key NOT LIKE 'argos.io/%'
+    WHERE key NOT LIKE 'longue-vue.io/%'
 ), '{}'::jsonb)
 WHERE annotations IS NOT NULL
   AND EXISTS (
-      SELECT 1 FROM jsonb_object_keys(annotations) k WHERE k LIKE 'argos.io/%'
+      SELECT 1 FROM jsonb_object_keys(annotations) k WHERE k LIKE 'longue-vue.io/%'
   );
 
 UPDATE persistent_volumes
 SET annotations = COALESCE((
     SELECT jsonb_object_agg(key, value)
     FROM jsonb_each(annotations)
-    WHERE key NOT LIKE 'argos.io/%'
+    WHERE key NOT LIKE 'longue-vue.io/%'
 ), '{}'::jsonb)
 WHERE annotations IS NOT NULL
   AND EXISTS (
-      SELECT 1 FROM jsonb_object_keys(annotations) k WHERE k LIKE 'argos.io/%'
+      SELECT 1 FROM jsonb_object_keys(annotations) k WHERE k LIKE 'longue-vue.io/%'
   );
 
 UPDATE persistent_volume_claims
 SET annotations = COALESCE((
     SELECT jsonb_object_agg(key, value)
     FROM jsonb_each(annotations)
-    WHERE key NOT LIKE 'argos.io/%'
+    WHERE key NOT LIKE 'longue-vue.io/%'
 ), '{}'::jsonb)
 WHERE annotations IS NOT NULL
   AND EXISTS (
-      SELECT 1 FROM jsonb_object_keys(annotations) k WHERE k LIKE 'argos.io/%'
+      SELECT 1 FROM jsonb_object_keys(annotations) k WHERE k LIKE 'longue-vue.io/%'
   );
 
 UPDATE virtual_machines
 SET annotations = COALESCE((
     SELECT jsonb_object_agg(key, value)
     FROM jsonb_each(annotations)
-    WHERE key NOT LIKE 'argos.io/%'
+    WHERE key NOT LIKE 'longue-vue.io/%'
 ), '{}'::jsonb)
 WHERE annotations IS NOT NULL
   AND EXISTS (
-      SELECT 1 FROM jsonb_object_keys(annotations) k WHERE k LIKE 'argos.io/%'
+      SELECT 1 FROM jsonb_object_keys(annotations) k WHERE k LIKE 'longue-vue.io/%'
   );
 
 UPDATE cloud_accounts
 SET annotations = COALESCE((
     SELECT jsonb_object_agg(key, value)
     FROM jsonb_each(annotations)
-    WHERE key NOT LIKE 'argos.io/%'
+    WHERE key NOT LIKE 'longue-vue.io/%'
 ), '{}'::jsonb)
 WHERE annotations IS NOT NULL
   AND EXISTS (
-      SELECT 1 FROM jsonb_object_keys(annotations) k WHERE k LIKE 'argos.io/%'
+      SELECT 1 FROM jsonb_object_keys(annotations) k WHERE k LIKE 'longue-vue.io/%'
   );
 
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
--- Down is intentionally a no-op: stripped argos.io/* keys cannot be
+-- Down is intentionally a no-op: stripped longue-vue.io/* keys cannot be
 -- reconstructed. To re-test the migration on a fresh DB, re-run the up.
 SELECT 1;
 -- +goose StatementEnd
@@ -1132,7 +1132,7 @@ go test -count=1 -race ./internal/store/...
 
 Expected: pass. The store-level tests should run all goose migrations including the new one without error.
 
-### Task 6.5: Final docs/scripts sweep for `argos.io`
+### Task 6.5: Final docs/scripts sweep for `longue-vue.io`
 
 **Files:** any remaining references in `docs/`, `README.md`, `CHANGELOG.md`, `scripts/`.
 
@@ -1160,7 +1160,7 @@ Expected: `OK`.
 
 ```bash
 git -c commit.gpgsign=false add -A
-git -c commit.gpgsign=false commit -m "refactor(annotations): rename argos.io domain to longue-vue.io with strip migration"
+git -c commit.gpgsign=false commit -m "refactor(annotations): rename longue-vue.io domain to longue-vue.io with strip migration"
 ```
 
 ---
@@ -1521,10 +1521,10 @@ For comments that say "Argos REST API" or "Argos Design System", change to `long
 - [ ] **Step 3: Verify**
 
 ```bash
-grep -rn '\bArgos\b\|\bargosd\b\|argos-collector' ui/src/ | grep -v 'argos.io' || echo "OK"
+grep -rn '\bArgos\b\|\bargosd\b\|argos-collector' ui/src/ | grep -v 'longue-vue.io' || echo "OK"
 ```
 
-(`argos.io` was already renamed in Phase 6; the test above filters that out — it should be empty too if Phase 6 was complete.)
+(`longue-vue.io` was already renamed in Phase 6; the test above filters that out — it should be empty too if Phase 6 was complete.)
 
 Expected: `OK`.
 
@@ -1786,7 +1786,7 @@ grep -rn 'argos\|Argos\|ARGOS' \
 - [ ] **Step 2: Inspect each remaining result manually**
 
 Expected categories of legitimate residue:
-- Inside `migrations/00029_strip_argos_io_annotations.sql` — references to `argos.io/%` are intentional (they describe what we strip).
+- Inside `migrations/00029_strip_argos_io_annotations.sql` — references to `longue-vue.io/%` are intentional (they describe what we strip).
 - Inside `internal/auth/tokens.go` and `internal/auth/tokens_test.go` — `TokenSchemeLegacy = "argos_pat_"` and tests asserting legacy parsing succeeds. Intentional.
 - Inside ADR-0020 and this plan — historical context. Intentional.
 - Inside the rename commit messages (visible via `git log --oneline`) — intentional.
@@ -1864,7 +1864,7 @@ gh pr create \
 ## Summary
 - Renames the product from "Argos" to "longue-vue" across code, charts, docs, ADRs, CI, UI, and Prometheus metric namespace.
 - Adds ADR-0020 documenting the decision and the PAT dual-prefix strategy.
-- Adds migration 00029 to strip legacy `argos.io/*` keys from all annotation JSONB columns.
+- Adds migration 00029 to strip legacy `longue-vue.io/*` keys from all annotation JSONB columns.
 - Preserves PAT verification for legacy `argos_pat_*` tokens issued in production; new tokens are emitted as `longue_vue_pat_*`.
 
 ## Breaking changes (intentional)
@@ -1872,7 +1872,7 @@ gh pr create \
 - Docker images: pull from `ghcr.io/sthalbert/longue-vue*`.
 - Environment variables: `LONGUE_VUE_*` → `LONGUE_VUE_*`.
 - Prometheus metrics: `argos_*` → `longue_vue_*`. Update Grafana dashboards and Prometheus rules.
-- Annotation domain: `argos.io/*` → `longue-vue.io/*`. Operator-curated tags on K8s resources must be re-applied.
+- Annotation domain: `longue-vue.io/*` → `longue-vue.io/*`. Operator-curated tags on K8s resources must be re-applied.
 - Session cookie: existing sessions are invalidated on first request after deploy (8-hour sliding expiry restarts).
 - HTTP custom headers: `X-Argos-Verified-*` → `X-Longue-Vue-Verified-*` (gateway and argosd deploy together).
 
@@ -1887,7 +1887,7 @@ gh pr create \
 - [ ] Manual smoke: start the daemon, see `LONGUE-VUE FIRST-RUN BOOTSTRAP` banner, hit `/metrics`, see `longue_vue_*` metrics
 - [ ] Legacy PAT verification still accepts `argos_pat_*` tokens (covered by `TestParseToken_AcceptsBothSchemes`)
 - [ ] New PAT issuance emits `longue_vue_pat_*` (covered by `TestMintToken_UsesNewSchemeOnly`)
-- [ ] Migration 00029 strips `argos.io/*` keys from a populated DB (manual test on a copy of prod data)
+- [ ] Migration 00029 strips `longue-vue.io/*` keys from a populated DB (manual test on a copy of prod data)
 
 ## Operator follow-ups (after merge)
 - Rename the GitHub repo `sthalbert/Argos` → `sthalbert/longue-vue` (auto-redirect handles old URLs).
@@ -1916,7 +1916,7 @@ For each numbered category from the original 18-category cartography, confirm a 
 | 2 | Binary names | Task 2.1, 2.2, 2.3 |
 | 3 | Env vars `LONGUE_VUE_*` | Task 3.1, 3.2, 3.3 |
 | 4 | PAT prefix | Task 5.1–5.6 (with TDD) |
-| 5 | Annotations `argos.io/*` | Task 6.1–6.6 (incl. migration 00029) |
+| 5 | Annotations `longue-vue.io/*` | Task 6.1–6.6 (incl. migration 00029) |
 | 6 | Helm charts | Task 8.1–8.4 |
 | 7 | Docker images | Task 9.1, 9.2 |
 | 8 | Documentation | Task 12.1–12.4 |

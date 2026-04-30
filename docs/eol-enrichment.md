@@ -11,9 +11,9 @@ The enricher runs as a background goroutine inside argosd. On each tick it:
 3. Lists every non-terminated non-Kubernetes VM in the CMDB.
 4. Extracts version strings from known fields (Kubernetes version, container runtime, OS image, kernel version on clusters and nodes; operator-declared applications on VMs).
 5. Matches each version against the endoflife.date API to determine lifecycle status.
-6. Writes a structured annotation under the `argos.io/eol.<product>` key on the entity.
+6. Writes a structured annotation under the `longue-vue.io/eol.<product>` key on the entity.
 
-For VMs, stale `argos.io/eol.*` annotations (from applications that were removed from the list) are dropped on each tick. Annotations under any other key are preserved. For clusters and nodes, the enricher only overwrites its own `argos.io/eol.*` keys; all other annotations are untouched.
+For VMs, stale `longue-vue.io/eol.*` annotations (from applications that were removed from the list) are dropped on each tick. Annotations under any other key are preserved. For clusters and nodes, the enricher only overwrites its own `longue-vue.io/eol.*` keys; all other annotations are untouched.
 
 ## Enable the enricher
 
@@ -90,7 +90,7 @@ Products not listed on endoflife.date, or versions that don't match any known cy
 
 ### Virtual machines
 
-Non-Kubernetes platform VMs are enriched via the operator-curated `applications` field. The enricher reads each VM's `applications` array and writes one `argos.io/eol.<product>` annotation per declared entry. See [VM Applications](vm-applications.md) for how to declare applications.
+Non-Kubernetes platform VMs are enriched via the operator-curated `applications` field. The enricher reads each VM's `applications` array and writes one `longue-vue.io/eol.<product>` annotation per declared entry. See [VM Applications](vm-applications.md) for how to declare applications.
 
 **What the enricher does with each application entry:**
 
@@ -99,7 +99,7 @@ Non-Kubernetes platform VMs are enriched via the operator-curated `applications`
 3. Extracts the major.minor cycle from the declared `version` string. A leading `v` and any build suffix are stripped (`v1.15.4-ent` → cycle `1.15`). If no major.minor can be parsed, the stub annotation is used.
 4. Matches the cycle against the product's release list on endoflife.date and writes a full annotation including `eol_status`, `eol` date, `latest`, and `latest_available`.
 
-On each tick, the enricher drops any `argos.io/eol.*` annotations that no longer correspond to a declared application, so stale annotations from removed entries disappear automatically. Annotations under any other key are preserved.
+On each tick, the enricher drops any `longue-vue.io/eol.*` annotations that no longer correspond to a declared application, so stale annotations from removed entries disappear automatically. Annotations under any other key are preserved.
 
 Terminated VMs are skipped.
 
@@ -109,7 +109,7 @@ Terminated VMs are skipped.
 
 ## Annotation format
 
-Each enriched entity carries one annotation per matched product. The key is `argos.io/eol.<product>` and the value is a JSON string:
+Each enriched entity carries one annotation per matched product. The key is `longue-vue.io/eol.<product>` and the value is a JSON string:
 
 ```json
 {

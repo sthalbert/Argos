@@ -159,7 +159,7 @@ CREATE TABLE virtual_machines (
     -- semi-structured
     tags                    JSONB NOT NULL DEFAULT '{}'::jsonb,    -- raw provider Tags as map
     labels                  JSONB NOT NULL DEFAULT '{}'::jsonb,    -- normalised labels
-    annotations             JSONB NOT NULL DEFAULT '{}'::jsonb,    -- argos.io/* (EOL etc.)
+    annotations             JSONB NOT NULL DEFAULT '{}'::jsonb,    -- longue-vue.io/* (EOL etc.)
 
     -- curated
     owner                   TEXT,
@@ -364,13 +364,13 @@ A VM ends up in `virtual_machines` **unless** one of three conditions is true. *
 | Condition                                          | Where it's checked        | Outcome                                |
 |----------------------------------------------------|---------------------------|----------------------------------------|
 | Has `OscK8sClusterID/*` or `OscK8sNodeName=*` tag  | Collector pre-filter      | Dropped before any HTTP POST           |
-| Has `argos.io/ignore=true` tag                     | Collector pre-filter      | Dropped before any HTTP POST           |
+| Has `longue-vue.io/ignore=true` tag                     | Collector pre-filter      | Dropped before any HTTP POST           |
 | `provider_vm_id` matches an existing `nodes.provider_id` | Argosd server-side  | `409 Conflict`; collector logs and skips |
 
 The collector applies the **cheap pre-filter** at its boundary:
 
 - Drop any VM bearing tags matching `OscK8sClusterID/*` or `OscK8sNodeName=*` (Outscale CCM ownership tags). Saves an HTTP round-trip per K8s worker.
-- Drop any VM bearing `argos.io/ignore=true` (operator-set escape hatch — argos only reads it, never writes it).
+- Drop any VM bearing `longue-vue.io/ignore=true` (operator-set escape hatch — argos only reads it, never writes it).
 
 Argosd applies the **canonical dedup** server-side on `POST /v1/virtual-machines`:
 
@@ -520,10 +520,10 @@ A new `Dockerfile.vm-collector` (or build stage) produces the image. CI builds a
 - **ALT-011** **Description**: Put Outscale in `internal/outscale/` directly; refactor when the next provider arrives.
 - **ALT-012** **Rejection Reason**: The seam (a `Provider` interface + a `VM` struct) costs ~40 lines and turns the second provider from a refactor into a one-file contribution.
 
-### Tag-driven opt-in (`argos.io/platform=true`)
+### Tag-driven opt-in (`longue-vue.io/platform=true`)
 
-- **ALT-013** **Description**: Operator must tag every platform VM with `argos.io/platform=true`; collector ingests only tagged VMs.
-- **ALT-014** **Rejection Reason**: Operators don't tag their existing VMs with argos-specific tags and can't reasonably be asked to retag a fleet. The VM-ID dedup against `nodes.provider_id` is sufficient: every VM that isn't a kube node IS a platform VM by definition. The `argos.io/ignore=true` opt-out remains as an escape hatch (read by argos, set by operators if they want to exclude something).
+- **ALT-013** **Description**: Operator must tag every platform VM with `longue-vue.io/platform=true`; collector ingests only tagged VMs.
+- **ALT-014** **Rejection Reason**: Operators don't tag their existing VMs with argos-specific tags and can't reasonably be asked to retag a fleet. The VM-ID dedup against `nodes.provider_id` is sufficient: every VM that isn't a kube node IS a platform VM by definition. The `longue-vue.io/ignore=true` opt-out remains as an escape hatch (read by argos, set by operators if they want to exclude something).
 
 ### Collector-side `LONGUE_VUE_VM_COLLECTOR_ROLE_TAG` env var
 
@@ -557,7 +557,7 @@ A new `Dockerfile.vm-collector` (or build stage) produces the image. CI builds a
   - `provider/outscale.go` — Outscale impl using `github.com/outscale/osc-sdk-go/v2`. Maps `osc.Vm` → `provider.VM`. Canonical state mapping for `vm.State`. Instance-type → CPU/memory parser for known TINA families. Tags flattened from `[]ResourceTag` to `map[string]string`. Hardcoded `ansible_group` as the role-tag key.
   - `provider/fake.go` — test fake.
   - `apiclient/store.go` — HTTP-backed store implementing the narrow collector interface: `FetchCredentials`, `RegisterCloudAccount`, `UpdateCloudAccountStatus`, `UpsertVirtualMachine`, `ReconcileVirtualMachines`. Retry with exponential backoff on 5xx (3 attempts max). Stop on 401/403 (token revoked or misconfigured). Inherits gateway/proxy/mTLS support from the same `http.Transport` shape as `argos-collector`.
-  - `filter/filter.go` — pre-filter (drops `OscK8sClusterID/*`, `OscK8sNodeName=*`, `argos.io/ignore=true`).
+  - `filter/filter.go` — pre-filter (drops `OscK8sClusterID/*`, `OscK8sNodeName=*`, `longue-vue.io/ignore=true`).
   - `collector.go` — the polling loop: fetch creds (with cache + periodic refresh), instantiate provider, list VMs, pre-filter, upsert each VM, reconcile after success, update status. Handles 409 from `POST /v1/virtual-machines` (already-a-kube-node) by logging and continuing.
 - **IMP-004** New binary `cmd/argos-vm-collector/main.go`. Env parsing, signal handling (SIGINT/SIGTERM → context cancel → graceful drain), one collector loop. Build with `CGO_ENABLED=0`. Same distroless base, UID 65532.
 - **IMP-005** Argosd-side store interface additions:

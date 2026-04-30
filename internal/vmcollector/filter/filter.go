@@ -4,7 +4,7 @@
 // Three drop conditions:
 //   - any tag matching OscK8sClusterID/* (Outscale CCM cluster ownership)
 //   - any tag matching OscK8sNodeName=*  (Outscale CCM node ownership)
-//   - any tag argos.io/ignore=true       (operator escape hatch)
+//   - any tag longue-vue.io/ignore=true   (operator escape hatch)
 //
 // Server-side dedup against nodes.provider_id is the source of truth;
 // this filter is a performance optimisation to avoid the HTTP round-trip
@@ -20,7 +20,7 @@ import (
 const (
 	cccmTagPrefix    = "OscK8sClusterID/"
 	cccmNodeNameKey  = "OscK8sNodeName"
-	argosIgnoreKey   = "argos.io/ignore"
+	argosIgnoreKey   = "longue-vue.io/ignore"
 	argosIgnoreOnVal = "true"
 )
 

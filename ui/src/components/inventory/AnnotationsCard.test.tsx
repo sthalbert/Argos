@@ -25,7 +25,7 @@ describe('AnnotationsCard', () => {
 
   it('renders chips for populated annotations', () => {
     const { container } = render(
-      <AnnotationsCard annotations={{ 'argos.io/env': 'prod', 'argos.io/tier': 'web' }} />,
+      <AnnotationsCard annotations={{ 'longue-vue.io/env': 'prod', 'longue-vue.io/tier': 'web' }} />,
     );
     expect(container.querySelectorAll('.label-chip').length).toBe(2);
   });

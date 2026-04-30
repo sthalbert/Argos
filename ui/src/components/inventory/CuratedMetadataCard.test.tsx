@@ -24,7 +24,7 @@ const populatedValues: CuratedValues = {
   criticality: 'high',
   notes: 'Critical cluster — notify oncall before maintenance.',
   runbook_url: 'https://runbooks.example.com/prod',
-  annotations: { 'argos.io/env': 'prod' },
+  annotations: { 'longue-vue.io/env': 'prod' },
 };
 
 describe('CuratedMetadataCard', () => {
