@@ -61,6 +61,11 @@ jobs:
           npm ci
           npm run build
 
+      - name: UI tests
+        run: |
+          cd ui
+          npm test
+
       - name: Verify generated code is current
         run: |
           go generate ./...
