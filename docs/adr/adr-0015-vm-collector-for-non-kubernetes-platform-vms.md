@@ -486,7 +486,7 @@ A new `Dockerfile.vm-collector` (or build stage) produces the image. CI builds a
 - **NEG-005** A leaked `vm-collector` PAT exposes one cloud account's plaintext SK. Mitigation: the scope is bound to a single account (the admin issues the token tied to a specific `cloud_account_id`); rotation is one click in the UI; every credential read is audit-logged.
 - **NEG-006** Two collectors with overlapping concerns (kube push collector writes `nodes`, VM push collector writes `virtual_machines`) — operators must understand the split. Mitigated by clear UI labelling ("Kubernetes Nodes" / "Virtual Machines") and the deterministic server-side dedup in §8.
 - **NEG-007** Credential fetch over HTTPS adds a round-trip on collector startup and every refresh interval. Acceptable: O(1) per hour per collector, far below any meaningful overhead.
-- **NEG-008** The hybrid-onboarding flow has a "pending credentials" state that requires admin attention to clear. If admins ignore the UI banner, a collector can sit idle indefinitely. Mitigation: surface the state prominently on the admin home page, expose a `argos_cloud_accounts_pending_credentials` Prometheus gauge for alerting.
+- **NEG-008** The hybrid-onboarding flow has a "pending credentials" state that requires admin attention to clear. If admins ignore the UI banner, a collector can sit idle indefinitely. Mitigation: surface the state prominently on the admin home page, expose a `longue_vue_cloud_accounts_pending_credentials` Prometheus gauge for alerting.
 
 ## Alternatives Considered
 
@@ -598,8 +598,8 @@ A new `Dockerfile.vm-collector` (or build stage) produces the image. CI builds a
   - Token issuance UI: admin form to create a `vm-collector` PAT requires selecting the bound `cloud_account_id`. Backend stores the binding on the token row (new column `bound_cloud_account_id` on the `tokens` table; nullable for non-vm-collector tokens). Middleware enforces the binding: a vm-collector PAT can only access its own account's endpoints.
   - Migration `00025_add_token_bound_cloud_account.sql` adds the column.
 - **IMP-009** Prometheus metrics:
-  - argosd: `argos_cloud_accounts_total{status}`, `argos_cloud_accounts_pending_credentials` (gauge), `argos_virtual_machines_total{cloud_account, terminated}`, `argos_credentials_reads_total{cloud_account}`.
-  - collector binary: `argos_vm_collector_ticks_total{status}`, `argos_vm_collector_tick_duration_seconds`, `argos_vm_collector_vms_observed`, `argos_vm_collector_vms_skipped_kubernetes`, `argos_vm_collector_credential_refreshes_total{result}`, `argos_vm_collector_last_success_timestamp_seconds`. Exposed on a localhost-only `/metrics` listener (port from `LONGUE_VUE_VM_COLLECTOR_METRICS_ADDR`, default `127.0.0.1:9090`).
+  - argosd: `longue_vue_cloud_accounts_total{status}`, `longue_vue_cloud_accounts_pending_credentials` (gauge), `longue_vue_virtual_machines_total{cloud_account, terminated}`, `argos_credentials_reads_total{cloud_account}`.
+  - collector binary: `longue_vue_vm_collector_ticks_total{status}`, `longue_vue_vm_collector_tick_duration_seconds`, `longue_vue_vm_collector_vms_observed`, `longue_vue_vm_collector_vms_skipped_kubernetes`, `longue_vue_vm_collector_credential_refreshes_total{result}`, `longue_vue_vm_collector_last_success_timestamp_seconds`. Exposed on a localhost-only `/metrics` listener (port from `LONGUE_VUE_VM_COLLECTOR_METRICS_ADDR`, default `127.0.0.1:9090`).
 - **IMP-010** UI work (`ui/src/`):
   - New routes: `/ui/virtual-machines`, `/ui/virtual-machines/:id`, `/ui/admin/cloud-accounts`, `/ui/admin/cloud-accounts/new`, `/ui/admin/cloud-accounts/:id`.
   - New nav entry "Virtual Machines" under the existing inventory section, with a new SVG icon (server/tower glyph distinct from the Node icon). Update `ui/src/icons.tsx`.

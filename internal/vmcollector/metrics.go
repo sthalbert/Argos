@@ -22,14 +22,14 @@ var Registry = prometheus.NewRegistry()
 
 var (
 	ticksTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "argos",
+		Namespace: "longue_vue",
 		Subsystem: "vm_collector",
 		Name:      "ticks_total",
 		Help:      "Cumulative collector ticks, labelled by status (success / error).",
 	}, []string{"status"})
 
 	tickDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Namespace: "argos",
+		Namespace: "longue_vue",
 		Subsystem: "vm_collector",
 		Name:      "tick_duration_seconds",
 		Help:      "Collector tick duration in seconds.",
@@ -37,35 +37,35 @@ var (
 	})
 
 	vmsObserved = prometheus.NewGauge(prometheus.GaugeOpts{
-		Namespace: "argos",
+		Namespace: "longue_vue",
 		Subsystem: "vm_collector",
 		Name:      "vms_observed",
 		Help:      "VMs returned by the cloud-provider API on the most recent tick (post-filter).",
 	})
 
 	vmsSkippedKubernetes = prometheus.NewCounter(prometheus.CounterOpts{
-		Namespace: "argos",
+		Namespace: "longue_vue",
 		Subsystem: "vm_collector",
 		Name:      "vms_skipped_kubernetes_total",
 		Help:      "Cumulative VMs skipped because they are already inventoried as Kubernetes nodes (server-side 409 or local OscK8s tag pre-filter).",
 	})
 
 	credentialRefreshes = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "argos",
+		Namespace: "longue_vue",
 		Subsystem: "vm_collector",
 		Name:      "credential_refreshes_total",
 		Help:      "Cumulative credential-fetch attempts, labelled by result (success / error).",
 	}, []string{"result"})
 
 	lastSuccessTimestamp = prometheus.NewGauge(prometheus.GaugeOpts{
-		Namespace: "argos",
+		Namespace: "longue_vue",
 		Subsystem: "vm_collector",
 		Name:      "last_success_timestamp_seconds",
 		Help:      "Unix timestamp of the most recent successful tick.",
 	})
 
 	buildInfo = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: "argos",
+		Namespace: "longue_vue",
 		Subsystem: "vm_collector",
 		Name:      "build_info",
 		Help:      "Set to 1 for the running argos-vm-collector build; labels carry version.",

@@ -139,7 +139,7 @@ This gives admins full control: enable MCP for a demo, disable it after an audit
 - The `read` scope is enforced on every tool call.
 - The existing HTTP server timeouts and body size limits apply to SSE transport.
 - Tool responses are capped at 200 items (same as REST API pagination limit).
-- Prometheus metrics: `argos_mcp_tool_calls_total{tool}`, `argos_mcp_tool_duration_seconds{tool}`.
+- Prometheus metrics: `longue_vue_mcp_tool_calls_total{tool}`, `longue_vue_mcp_tool_duration_seconds{tool}`.
 
 ## Consequences
 
@@ -180,7 +180,7 @@ This gives admins full control: enable MCP for a demo, disable it after an audit
 - **IMP-002**: Add `github.com/mark3labs/mcp-go` (or `github.com/anthropics/mcp-go` if available) to `go.mod` for MCP protocol handling.
 - **IMP-003**: Each tool is a function registered with the MCP server. Tool implementations are thin wrappers around existing store methods.
 - **IMP-004**: Wire the MCP server in `cmd/argosd/main.go` behind `LONGUE_VUE_MCP_ENABLED`. Start after the store is ready, stop on context cancellation.
-- **IMP-005**: Add Prometheus metrics: `argos_mcp_tool_calls_total{tool}`, `argos_mcp_tool_duration_seconds{tool}`.
+- **IMP-005**: Add Prometheus metrics: `longue_vue_mcp_tool_calls_total{tool}`, `longue_vue_mcp_tool_duration_seconds{tool}`.
 - **IMP-006**: Tests: unit tests for each tool with a fake store, integration test that starts the MCP server and calls tools via the SDK client.
 
 ## References

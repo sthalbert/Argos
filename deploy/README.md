@@ -181,20 +181,20 @@ Exported series:
 
 | Metric | Type | Labels |
 |---|---|---|
-| `argos_http_requests_total` | counter | `method`, `route`, `status` |
-| `argos_http_request_duration_seconds` | histogram | `method`, `route` |
-| `argos_collector_upserted_total` | counter | `cluster`, `resource` |
-| `argos_collector_reconciled_total` | counter | `cluster`, `resource` |
-| `argos_collector_errors_total` | counter | `cluster`, `resource`, `phase` |
-| `argos_collector_last_poll_timestamp_seconds` | gauge | `cluster`, `resource` |
-| `argos_build_info` | gauge | `version`, `go_version` |
+| `longue_vue_http_requests_total` | counter | `method`, `route`, `status` |
+| `longue_vue_http_request_duration_seconds` | histogram | `method`, `route` |
+| `longue_vue_collector_upserted_total` | counter | `cluster`, `resource` |
+| `longue_vue_collector_reconciled_total` | counter | `cluster`, `resource` |
+| `longue_vue_collector_errors_total` | counter | `cluster`, `resource`, `phase` |
+| `longue_vue_collector_last_poll_timestamp_seconds` | gauge | `cluster`, `resource` |
+| `longue_vue_build_info` | gauge | `version`, `go_version` |
 
 `phase` on `errors_total` is one of `list` / `upsert` / `reconcile` / `lookup`. `resource` is one of `version` / `cluster` / `nodes` / `namespaces` / `pods` / `workloads` / `services` / `ingresses` / `persistentvolumes` / `persistentvolumeclaims` / `replicasets`. Plus the default `go_*` and `process_*` collectors from `client_golang`.
 
 A simple freshness alert:
 
 ```
-time() - argos_collector_last_poll_timestamp_seconds{resource="nodes"} > 600
+time() - longue_vue_collector_last_poll_timestamp_seconds{resource="nodes"} > 600
 ```
 
 ## RBAC scope

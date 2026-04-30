@@ -670,7 +670,7 @@ func newCertReloader(certFile, keyFile string) (func(*tls.ClientHelloInfo) (*tls
 // that fails the handshake if the leaf cert's Subject CN is not in the
 // allow list. Empty list = any CN signed by the trusted CA passes.
 //
-// Increments argos_ingest_listener_client_cert_failures_total{reason="cn_not_allowed"}
+// Increments longue_vue_ingest_listener_client_cert_failures_total{reason="cn_not_allowed"}
 // on rejection so a misconfigured gateway is diagnosable from a single
 // Prometheus query.
 func enforceCNAllowlist(allow []string) func([][]byte, [][]*x509.Certificate) error {

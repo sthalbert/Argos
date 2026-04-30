@@ -154,14 +154,14 @@ The enricher exports Prometheus metrics on the `/metrics` endpoint:
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `argos_eol_enrichments_total` | counter | `cluster`, `resource`, `status` | Annotations written per tick. |
-| `argos_eol_errors_total` | counter | `cluster`, `resource`, `phase` | Errors during enrichment. `phase` is `list`, `resolve`, or `update`. |
-| `argos_eol_last_run_timestamp_seconds` | gauge | -- | Unix timestamp of the last completed enrichment run. |
+| `longue_vue_eol_enrichments_total` | counter | `cluster`, `resource`, `status` | Annotations written per tick. |
+| `longue_vue_eol_errors_total` | counter | `cluster`, `resource`, `phase` | Errors during enrichment. `phase` is `list`, `resolve`, or `update`. |
+| `longue_vue_eol_last_run_timestamp_seconds` | gauge | -- | Unix timestamp of the last completed enrichment run. |
 
 A simple freshness alert:
 
 ```
-time() - argos_eol_last_run_timestamp_seconds > 600
+time() - longue_vue_eol_last_run_timestamp_seconds > 600
 ```
 
 ## Air-gapped environments

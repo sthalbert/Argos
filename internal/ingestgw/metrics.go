@@ -29,7 +29,7 @@ import (
 // internal/vmcollector.
 var Registry = prometheus.NewRegistry() //nolint:gochecknoglobals // standard Prometheus registry pattern
 
-// Outcome labels for argos_ingest_gw_requests_total. Kept as a small
+// Outcome labels for longue_vue_ingest_gw_requests_total. Kept as a small
 // closed set so cardinality stays bounded regardless of traffic shape.
 const (
 	OutcomeAllowed         = "allowed"
@@ -43,14 +43,14 @@ const (
 
 var (
 	requestsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "argos",
+		Namespace: "longue_vue",
 		Subsystem: "ingest_gw",
 		Name:      "requests_total",
 		Help:      "Ingest gateway requests, labelled by HTTP method, route pattern, status class, and outcome.",
 	}, []string{"method", "route", "status_class", "outcome"})
 
 	requestDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Namespace: "argos",
+		Namespace: "longue_vue",
 		Subsystem: "ingest_gw",
 		Name:      "request_duration_seconds",
 		Help:      "End-to-end ingest gateway request latency in seconds (includes upstream RTT).",
@@ -58,7 +58,7 @@ var (
 	}, []string{"route", "outcome"})
 
 	upstreamDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Namespace: "argos",
+		Namespace: "longue_vue",
 		Subsystem: "ingest_gw",
 		Name:      "upstream_duration_seconds",
 		Help:      "Upstream-only request latency in seconds (excludes gateway-side overhead).",
@@ -66,42 +66,42 @@ var (
 	}, []string{"route"})
 
 	tokenVerifyTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "argos",
+		Namespace: "longue_vue",
 		Subsystem: "ingest_gw",
 		Name:      "token_verify_total",
 		Help:      "Calls to argosd's /v1/auth/verify, by result (valid / invalid / error).",
 	}, []string{"result"})
 
 	tokenCacheTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "argos",
+		Namespace: "longue_vue",
 		Subsystem: "ingest_gw",
 		Name:      "token_cache_total",
 		Help:      "Verify cache lifecycle events: hit / miss / negative_hit / evict / inflight_dedupe.",
 	}, []string{"event"})
 
 	tokenCacheSize = prometheus.NewGauge(prometheus.GaugeOpts{
-		Namespace: "argos",
+		Namespace: "longue_vue",
 		Subsystem: "ingest_gw",
 		Name:      "token_cache_size",
 		Help:      "Current number of entries in the verify cache (positive + negative combined).",
 	})
 
 	certNotAfterSeconds = prometheus.NewGauge(prometheus.GaugeOpts{
-		Namespace: "argos",
+		Namespace: "longue_vue",
 		Subsystem: "ingest_gw",
 		Name:      "cert_not_after_seconds",
 		Help:      "Unix timestamp of the current mTLS client cert's NotAfter. Alerting: cert_not_after - time() < 3600.",
 	})
 
 	certReloadTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "argos",
+		Namespace: "longue_vue",
 		Subsystem: "ingest_gw",
 		Name:      "cert_reload_total",
 		Help:      "Hot-reload events from the cert watcher, by result (success / failure).",
 	}, []string{"result"})
 
 	bodyBytes = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Namespace: "argos",
+		Namespace: "longue_vue",
 		Subsystem: "ingest_gw",
 		Name:      "body_bytes",
 		Help:      "Distribution of forwarded request body sizes, by route. Power-of-two buckets from 1 KiB to 16 MiB.",
@@ -109,14 +109,14 @@ var (
 	}, []string{"route"})
 
 	inflightRequests = prometheus.NewGauge(prometheus.GaugeOpts{
-		Namespace: "argos",
+		Namespace: "longue_vue",
 		Subsystem: "ingest_gw",
 		Name:      "inflight_requests",
 		Help:      "Concurrent ingest gateway requests in flight.",
 	})
 
 	buildInfo = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: "argos",
+		Namespace: "longue_vue",
 		Subsystem: "ingest_gw",
 		Name:      "build_info",
 		Help:      "Set to 1 for the running argos-ingest-gw build; labels carry version and Go toolchain info.",

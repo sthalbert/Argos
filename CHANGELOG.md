@@ -360,14 +360,14 @@ the collector no longer needs a read-before-write at startup.
   passes `"ingest_gw"`. `GET /v1/admin/audit` accepts an optional `source`
   query parameter.
 - **Gateway Prometheus metrics** — new metrics on the gateway's private
-  registry: `argos_ingest_gw_requests_total{method,route,status_class,outcome}`,
-  `argos_ingest_gw_request_duration_seconds`, `argos_ingest_gw_upstream_duration_seconds`,
-  `argos_ingest_gw_token_verify_total{result}`,
-  `argos_ingest_gw_token_cache_total{event}`, `argos_ingest_gw_token_cache_size`,
-  `argos_ingest_gw_cert_not_after_seconds`, `argos_ingest_gw_cert_reload_total{result}`,
-  `argos_ingest_gw_body_bytes`, `argos_ingest_gw_inflight_requests`,
-  `argos_ingest_gw_build_info`. Argosd gains `argos_auth_verify_total{result}`
-  and `argos_ingest_listener_client_cert_failures_total{reason}`.
+  registry: `longue_vue_ingest_gw_requests_total{method,route,status_class,outcome}`,
+  `longue_vue_ingest_gw_request_duration_seconds`, `longue_vue_ingest_gw_upstream_duration_seconds`,
+  `longue_vue_ingest_gw_token_verify_total{result}`,
+  `longue_vue_ingest_gw_token_cache_total{event}`, `longue_vue_ingest_gw_token_cache_size`,
+  `longue_vue_ingest_gw_cert_not_after_seconds`, `longue_vue_ingest_gw_cert_reload_total{result}`,
+  `longue_vue_ingest_gw_body_bytes`, `longue_vue_ingest_gw_inflight_requests`,
+  `longue_vue_ingest_gw_build_info`. Argosd gains `longue_vue_auth_verify_total{result}`
+  and `longue_vue_ingest_listener_client_cert_failures_total{reason}`.
 
 ### Changed
 
@@ -511,17 +511,17 @@ binary.
   distinct server/tower SVG icon. Home-page admin banner surfaces
   the count of `pending_credentials` accounts.
 - **Prometheus metrics**:
-  - argosd: `argos_cloud_accounts_total{status}`,
-    `argos_cloud_accounts_pending_credentials` (gauge for alerting),
-    `argos_virtual_machines_total{cloud_account, terminated}`,
+  - argosd: `longue_vue_cloud_accounts_total{status}`,
+    `longue_vue_cloud_accounts_pending_credentials` (gauge for alerting),
+    `longue_vue_virtual_machines_total{cloud_account, terminated}`,
     `argos_credentials_reads_total{cloud_account}`.
-  - collector binary: `argos_vm_collector_ticks_total{status}`,
-    `argos_vm_collector_tick_duration_seconds`,
-    `argos_vm_collector_vms_observed`,
-    `argos_vm_collector_vms_skipped_kubernetes_total`,
-    `argos_vm_collector_credential_refreshes_total{result}`,
-    `argos_vm_collector_last_success_timestamp_seconds`,
-    `argos_vm_collector_build_info{version}`. Exposed on a private
+  - collector binary: `longue_vue_vm_collector_ticks_total{status}`,
+    `longue_vue_vm_collector_tick_duration_seconds`,
+    `longue_vue_vm_collector_vms_observed`,
+    `longue_vue_vm_collector_vms_skipped_kubernetes_total`,
+    `longue_vue_vm_collector_credential_refreshes_total{result}`,
+    `longue_vue_vm_collector_last_success_timestamp_seconds`,
+    `longue_vue_vm_collector_build_info{version}`. Exposed on a private
     registry on a localhost-only `/metrics` listener.
 
 ### Changed
@@ -585,7 +585,7 @@ account.
   (`contains`, `owns`, `hosts`, `binds`). Depth-limited to 1–3 hops.
   Interactive SVG diagram on every entity detail page with depth selector
   and click-to-navigate. Prometheus metrics:
-  `argos_impact_queries_total`, `argos_impact_query_duration_seconds`.
+  `longue_vue_impact_queries_total`, `longue_vue_impact_query_duration_seconds`.
 
 - **MCP server** (ADR-0014) — Model Context Protocol server exposing 17
   read-only CMDB tools for AI agents. SSE and stdio transports. Bearer
@@ -895,7 +895,7 @@ navigation marker.
 - `/metrics` mounted unauthenticated on the main mux (Prometheus
   scrape convention): HTTP request / duration counters, collector
   upsert / reconcile / error counters, per-`(cluster, resource)`
-  last-poll gauges, `argos_build_info`.
+  last-poll gauges, `longue_vue_build_info`.
 - CI (GitHub Actions): conventional-commit title check, `go vet` /
   `go build` / `go test -race` against a Postgres service container,
   `golangci-lint`, UI `npm run build` + typecheck, Docker image

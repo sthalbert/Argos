@@ -262,12 +262,12 @@ No new env vars on argosd. The enricher's existing `LONGUE_VUE_EOL_*` variables 
 
 `internal/metrics/` gains:
 
-- `argos_eol_enrichments_total{entity_type, status}` — re-labelled with `entity_type` covering `cluster`, `node`, **`vm`**. Existing metric grows a new label value; back-compatible.
-- `argos_eol_errors_total{entity_type, phase}` — same shape extension.
+- `longue_vue_eol_enrichments_total{entity_type, status}` — re-labelled with `entity_type` covering `cluster`, `node`, **`vm`**. Existing metric grows a new label value; back-compatible.
+- `longue_vue_eol_errors_total{entity_type, phase}` — same shape extension.
 
-`argos_virtual_machines_total{cloud_account, terminated}` (existing) is unchanged.
+`longue_vue_virtual_machines_total{cloud_account, terminated}` (existing) is unchanged.
 
-No new metric for the search filters — the existing `argos_http_requests_total{method, route, status}` already tracks `GET /v1/virtual-machines` with all parameter combinations folded into the same series.
+No new metric for the search filters — the existing `longue_vue_http_requests_total{method, route, status}` already tracks `GET /v1/virtual-machines` with all parameter combinations folded into the same series.
 
 ## Consequences
 

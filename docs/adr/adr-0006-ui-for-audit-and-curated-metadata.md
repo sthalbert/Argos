@@ -38,7 +38,7 @@ This ADR decides the UI's scope, its data model contract with the collector, and
 
 1. **Browse and audit the CMDB.** Layer-scoped views (one page per ANSSI cartography layer per ADR-0002), cluster-scoped views, namespace drill-down, entity detail pages. Every list backed by the existing cursor-paginated REST endpoints. Filters match the existing query params (`cluster_id`, `namespace_id`, `kind`).
 2. **Edit curated metadata.** New fields that the collector never reads or writes — owner, criticality tier, free-text notes, runbook URL, arbitrary curated labels. Editing is gated by the `write` scope on the operator's bearer token.
-3. **Show freshness and collector health.** Surface `argos_collector_last_poll_timestamp_seconds` per `(cluster, resource)` so auditors can see at a glance which data is stale. Reuses the `/metrics` endpoint added in ADR context.
+3. **Show freshness and collector health.** Surface `longue_vue_collector_last_poll_timestamp_seconds` per `(cluster, resource)` so auditors can see at a glance which data is stale. Reuses the `/metrics` endpoint added in ADR context.
 4. **Read-only for observed fields.** `Pod.Phase`, `Workload.Kind`, `Ingress.Rules`, etc. render but are not editable in the UI — editing them would be pointless (the next collector tick would revert).
 
 **Out of scope (v1):** dashboards, charts, full-text search, diff view across time, relationship graphs, full cartography map rendering. All defensible future work; none block the audit + annotation use case this ADR unlocks.

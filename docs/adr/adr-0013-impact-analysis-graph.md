@@ -167,7 +167,7 @@ The endpoint requires the `read` scope (same as listing entities). The traversal
 - **IMP-002**: Add `GET /v1/impact/{entity_type}/{id}` to the OpenAPI spec with query param `depth`. Hand-written handler in `internal/api/impact_handlers.go` (same pattern as settings handlers).
 - **IMP-003**: UI: add `ImpactGraph` component using a lightweight graph layout library (e.g. `elkjs` for layout + SVG rendering, or `reactflow`). Mount as a tab on each entity detail page.
 - **IMP-004**: Tests: unit tests for the traverser with a fake store, verifying correct graph output for each entity type as root. Integration test against Postgres with seeded data.
-- **IMP-005**: Add Prometheus metrics: `argos_impact_queries_total{entity_type}`, `argos_impact_query_duration_seconds{entity_type}`.
+- **IMP-005**: Add Prometheus metrics: `longue_vue_impact_queries_total{entity_type}`, `longue_vue_impact_query_duration_seconds{entity_type}`.
 
 ## References
 

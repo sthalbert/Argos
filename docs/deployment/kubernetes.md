@@ -222,7 +222,7 @@ curl -sS http://localhost:8080/healthz | jq .
 curl -sS -b /tmp/argos.cookies http://localhost:8080/v1/namespaces | jq '.items | length'
 
 # Check metrics.
-curl -sS http://localhost:8080/metrics | grep argos_collector_last_poll
+curl -sS http://localhost:8080/metrics | grep longue_vue_collector_last_poll
 ```
 
 ## Uninstall

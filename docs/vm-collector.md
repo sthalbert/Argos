@@ -363,7 +363,7 @@ The reference Kustomize manifest (`deploy/vm-collector/configmap.yaml`) sets thi
 - Check collector logs for upsert errors.
 - Verify `LONGUE_VUE_VM_COLLECTOR_ACCOUNT_NAME` is correct — a typo creates a different placeholder account.
 - Confirm the cloud account is `active` (not `pending_credentials` or `disabled`) in the admin UI.
-- Confirm there are actually non-Kubernetes VMs in the account. If every VM is a kube worker, every one will be deduplicated and the `virtual_machines` list will legitimately be empty. Check the `argos_vm_collector_vms_skipped_kubernetes_total` metric.
+- Confirm there are actually non-Kubernetes VMs in the account. If every VM is a kube worker, every one will be deduplicated and the `virtual_machines` list will legitimately be empty. Check the `longue_vue_vm_collector_vms_skipped_kubernetes_total` metric.
 
 ## Observability
 
@@ -371,29 +371,29 @@ The collector exposes Prometheus metrics on `LONGUE_VUE_VM_COLLECTOR_METRICS_ADD
 
 | Metric | Type | Labels | Meaning |
 |--------|------|--------|---------|
-| `argos_vm_collector_ticks_total` | counter | `status` (`success`, `error`) | Number of tick attempts. |
-| `argos_vm_collector_tick_duration_seconds` | histogram | -- | End-to-end tick duration (fetch creds + list + push + reconcile). |
-| `argos_vm_collector_vms_observed` | gauge | -- | Number of VMs returned by the cloud provider on the last tick (before pre-filter). |
-| `argos_vm_collector_vms_skipped_kubernetes_total` | counter | -- | VMs dropped because they are kube nodes (sum of pre-filter + server-side 409). |
-| `argos_vm_collector_credential_refreshes_total` | counter | `result` (`success`, `error`) | Credential-fetch attempts. |
-| `argos_vm_collector_last_success_timestamp_seconds` | gauge | -- | Unix timestamp of the last successful tick. Use this for staleness alerts. |
-| `argos_vm_collector_build_info` | gauge | `version`, `commit` | Build identification (always `1`). |
+| `longue_vue_vm_collector_ticks_total` | counter | `status` (`success`, `error`) | Number of tick attempts. |
+| `longue_vue_vm_collector_tick_duration_seconds` | histogram | -- | End-to-end tick duration (fetch creds + list + push + reconcile). |
+| `longue_vue_vm_collector_vms_observed` | gauge | -- | Number of VMs returned by the cloud provider on the last tick (before pre-filter). |
+| `longue_vue_vm_collector_vms_skipped_kubernetes_total` | counter | -- | VMs dropped because they are kube nodes (sum of pre-filter + server-side 409). |
+| `longue_vue_vm_collector_credential_refreshes_total` | counter | `result` (`success`, `error`) | Credential-fetch attempts. |
+| `longue_vue_vm_collector_last_success_timestamp_seconds` | gauge | -- | Unix timestamp of the last successful tick. Use this for staleness alerts. |
+| `longue_vue_vm_collector_build_info` | gauge | `version`, `commit` | Build identification (always `1`). |
 
 Suggested alerts:
 
 ```yaml
 # Collector hasn't ticked successfully in 30 minutes
 - alert: ArgosVMCollectorStale
-  expr: time() - argos_vm_collector_last_success_timestamp_seconds > 1800
+  expr: time() - longue_vue_vm_collector_last_success_timestamp_seconds > 1800
   for: 5m
 
 # Repeated credential-fetch failures
 - alert: ArgosVMCollectorCredentialFailures
-  expr: rate(argos_vm_collector_credential_refreshes_total{result="error"}[15m]) > 0
+  expr: rate(longue_vue_vm_collector_credential_refreshes_total{result="error"}[15m]) > 0
   for: 15m
 ```
 
-Argosd itself exposes complementary metrics — `argos_cloud_accounts_pending_credentials` (a non-zero value means an admin needs to set credentials), `argos_credentials_reads_total{cloud_account}`, and `argos_virtual_machines_total{cloud_account, terminated}`. See [Monitoring](monitoring.md).
+Argosd itself exposes complementary metrics — `longue_vue_cloud_accounts_pending_credentials` (a non-zero value means an admin needs to set credentials), `argos_credentials_reads_total{cloud_account}`, and `longue_vue_virtual_machines_total{cloud_account, terminated}`. See [Monitoring](monitoring.md).
 
 ## See also
 

@@ -157,7 +157,7 @@ The fix is targeted at the four pentest findings; out of scope:
 
 ### 9. Observability
 
-No new Prometheus metrics are required. The existing `argos_http_requests_total{...}` covers the listener; the listener mode is recorded at startup as a structured log line:
+No new Prometheus metrics are required. The existing `longue_vue_http_requests_total{...}` covers the listener; the listener mode is recorded at startup as a structured log line:
 
 ```
 public_listener_mode=tls           tls_min_version=1.3   trusted_proxies=2  require_https=true

@@ -87,15 +87,15 @@ The MCP server exports Prometheus metrics on the `/metrics` endpoint:
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `argos_mcp_tool_calls_total` | counter | `tool` | Number of tool invocations, per tool name. |
-| `argos_mcp_tool_duration_seconds` | histogram | `tool` | Tool call duration in seconds, per tool name. |
+| `longue_vue_mcp_tool_calls_total` | counter | `tool` | Number of tool invocations, per tool name. |
+| `longue_vue_mcp_tool_duration_seconds` | histogram | `tool` | Tool call duration in seconds, per tool name. |
 
 Alert on sustained error rates or slow tool calls:
 
 ```
-rate(argos_mcp_tool_calls_total[5m]) > 0
+rate(longue_vue_mcp_tool_calls_total[5m]) > 0
   and
-histogram_quantile(0.95, rate(argos_mcp_tool_duration_seconds_bucket[5m])) > 5
+histogram_quantile(0.95, rate(longue_vue_mcp_tool_duration_seconds_bucket[5m])) > 5
 ```
 
 ## Security

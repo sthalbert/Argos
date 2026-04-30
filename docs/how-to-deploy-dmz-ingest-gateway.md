@@ -292,10 +292,10 @@ Or as a minimal Envoy cluster + listener snippet (xDS / static config):
 
 ```yaml
 clusters:
-  - name: argos_ingest_gw
+  - name: longue_vue_ingest_gw
     type: STRICT_DNS
     load_assignment:
-      cluster_name: argos_ingest_gw
+      cluster_name: longue_vue_ingest_gw
       endpoints:
         - lb_endpoints:
             - endpoint:
@@ -358,8 +358,8 @@ curl -sS \
 # Port-forward the gateway's health/metrics port (not exposed via Envoy):
 kubectl -n <DMZ_NAMESPACE> port-forward svc/argos-ingest-gw 9090:9090 &
 
-curl -s http://localhost:9090/metrics | grep argos_ingest_gw_requests_total
-# Expect: argos_ingest_gw_requests_total{...,outcome="allowed",...} <count>
+curl -s http://localhost:9090/metrics | grep longue_vue_ingest_gw_requests_total
+# Expect: longue_vue_ingest_gw_requests_total{...,outcome="allowed",...} <count>
 ```
 
 ### Check the argosd audit log
@@ -409,7 +409,7 @@ Check the argosd-side metric for the failure reason:
 
 ```sh
 curl -s https://argos.internal:8080/metrics 2>/dev/null \
-  | grep argos_ingest_listener_client_cert_failures_total
+  | grep longue_vue_ingest_listener_client_cert_failures_total
 ```
 
 Possible `reason` label values:
@@ -427,7 +427,7 @@ Check the gateway cert-reload metric:
 
 ```sh
 curl -s http://localhost:9090/metrics \
-  | grep argos_ingest_gw_cert_reload_total
+  | grep longue_vue_ingest_gw_cert_reload_total
 # outcome="failure" incrementing means the watcher found a new file but failed to parse it.
 ```
 
@@ -435,7 +435,7 @@ Also check cert expiry:
 
 ```sh
 curl -s http://localhost:9090/metrics \
-  | grep argos_ingest_gw_cert_not_after_seconds
+  | grep longue_vue_ingest_gw_cert_not_after_seconds
 # Compare to $(date +%s). Less than 3600 s away = certificate expires within 1 hour.
 ```
 

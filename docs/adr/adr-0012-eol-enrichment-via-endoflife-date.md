@@ -215,7 +215,7 @@ Column renames for clarity: "Cycle" → **Version**, "Cycle Latest" → **Patch*
 - **IMP-002**: Create `internal/eol/endoflife/` sub-package: HTTP client for endoflife.date API with in-memory product cache, configurable base URL, timeout, and `http.Client` injection for testing.
 - **IMP-003**: Create `internal/eol/matcher/` sub-package: version extraction and product-matching logic. Start with `KubernetesVersionMatcher`, `ContainerRuntimeMatcher`, `OSImageMatcher`, `KernelMatcher`. Each implements a `Match(fieldValue string) (product, cycle string, ok bool)` interface. Unit-test with real-world `os_image` and `container_runtime_version` strings from diverse clusters.
 - **IMP-004**: Wire the enricher in `cmd/argosd/main.go` behind `LONGUE_VUE_EOL_ENABLED`. Start after the store is ready, stop on context cancellation (same as collector goroutines).
-- **IMP-005**: Add Prometheus metrics: `argos_eol_enrichments_total{product, status}`, `argos_eol_errors_total{product, phase}`, `argos_eol_last_run_timestamp_seconds`.
+- **IMP-005**: Add Prometheus metrics: `longue_vue_eol_enrichments_total{product, status}`, `longue_vue_eol_errors_total{product, phase}`, `longue_vue_eol_last_run_timestamp_seconds`.
 - **IMP-006**: UI: add EOL badges to cluster detail and node detail pages. Read from `annotations["longue-vue.io/eol.*"]`.
 - **IMP-007**: Tests: unit tests for matchers, integration test that starts the enricher against a fake HTTP server returning canned endoflife.date responses and verifies annotations land in the store.
 

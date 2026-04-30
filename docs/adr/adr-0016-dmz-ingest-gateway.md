@@ -161,12 +161,12 @@ Argosd's CA trust is orthogonal: a `--client-ca-file` (or `LONGUE_VUE_INGEST_LIS
 - Cert TTL: **24 h** default, max **48 h** (operator-tunable in Helm values).
 - Renew at **50%** of TTL (12 h before expiry by default) — gives a 12 h window to alert on renewal failure before the running cert expires.
 - Vault Agent template writes `/etc/argos-ingest-gw/tls/tls.crt` + `tls.key` atomically.
-- Renewal failures: cert eventually expires → mTLS handshakes to argosd start failing → all writes 503 → `argos_ingest_gw_cert_renewal_failures_total` and `argos_ingest_gw_cert_not_after_seconds` Prometheus alerts page the operator. Collectors retry with backoff; no data loss provided argosd recovers within the collector's retry window.
+- Renewal failures: cert eventually expires → mTLS handshakes to argosd start failing → all writes 503 → `longue_vue_ingest_gw_cert_renewal_failures_total` and `longue_vue_ingest_gw_cert_not_after_seconds` Prometheus alerts page the operator. Collectors retry with backoff; no data loss provided argosd recovers within the collector's retry window.
 
 Argosd-side cert validation (defense in depth on top of "signed by `--client-ca-file`"):
 
 1. **CN allowlist** (`LONGUE_VUE_INGEST_LISTEN_CLIENT_CN_ALLOW`, optional) — comma-separated allowed Subject CNs. When set, e.g. `argos-ingest-gw`, blocks any other cert the same CA might be issuing.
-2. **Cert expiry** — Go's stdlib enforces this; argosd re-checks in a `VerifyPeerCertificate` callback so the failure mode lands as a structured `argos_ingest_listener_client_cert_failures_total{reason="expired"}` increment instead of an opaque handshake reset.
+2. **Cert expiry** — Go's stdlib enforces this; argosd re-checks in a `VerifyPeerCertificate` callback so the failure mode lands as a structured `longue_vue_ingest_listener_client_cert_failures_total{reason="expired"}` increment instead of an opaque handshake reset.
 3. **No SAN-IP / SAN-DNS check** — the gateway dials argosd, never the reverse; argosd does not care what name the gateway thinks it has.
 
 ### 5. Token verification — `POST /v1/auth/verify` and the gateway cache
@@ -301,7 +301,7 @@ Header handling at the proxy hop:
 Synchronous proxy. No buffering. No queue. No disk spool. On argosd unreachable (5xx, timeout, mTLS handshake failure):
 
 - The gateway returns `503 Service Unavailable` to the collector.
-- `argos_ingest_gw_requests_total{outcome="upstream_error"}` increments.
+- `longue_vue_ingest_gw_requests_total{outcome="upstream_error"}` increments.
 - The verify cache is **not** populated (negative or positive) for the failing request.
 - `argos-collector`'s existing exponential-backoff retry handles recovery — the gateway sees the next attempt as a fresh request.
 
@@ -462,35 +462,35 @@ Gateway Prometheus metrics, exposed on `:9090/metrics` (unauthenticated, bound t
 
 | Metric | Type | Labels |
 |---|---|---|
-| `argos_ingest_gw_requests_total` | counter | `method`, `route`, `status_class`, `outcome` (allowed/denied_path/denied_method/denied_token/denied_scope/upstream_error/upstream_timeout) |
-| `argos_ingest_gw_request_duration_seconds` | histogram | `route`, `outcome` |
-| `argos_ingest_gw_upstream_duration_seconds` | histogram | `route` |
-| `argos_ingest_gw_token_verify_total` | counter | `result` (valid/invalid/error) |
-| `argos_ingest_gw_token_cache_total` | counter | `event` (hit/miss/negative_hit/evict/inflight_dedupe) |
-| `argos_ingest_gw_token_cache_size` | gauge | — |
-| `argos_ingest_gw_cert_not_after_seconds` | gauge | — |
-| `argos_ingest_gw_cert_reload_total` | counter | `result` (success/failure) |
-| `argos_ingest_gw_cert_renewal_failures_total` | counter | — |
-| `argos_ingest_gw_body_bytes` | histogram (powers-of-two, 1 KiB to 16 MiB) | `route` |
-| `argos_ingest_gw_inflight_requests` | gauge | — |
-| `argos_ingest_gw_build_info` | gauge (always 1) | `version`, `commit`, `go_version` |
+| `longue_vue_ingest_gw_requests_total` | counter | `method`, `route`, `status_class`, `outcome` (allowed/denied_path/denied_method/denied_token/denied_scope/upstream_error/upstream_timeout) |
+| `longue_vue_ingest_gw_request_duration_seconds` | histogram | `route`, `outcome` |
+| `longue_vue_ingest_gw_upstream_duration_seconds` | histogram | `route` |
+| `longue_vue_ingest_gw_token_verify_total` | counter | `result` (valid/invalid/error) |
+| `longue_vue_ingest_gw_token_cache_total` | counter | `event` (hit/miss/negative_hit/evict/inflight_dedupe) |
+| `longue_vue_ingest_gw_token_cache_size` | gauge | — |
+| `longue_vue_ingest_gw_cert_not_after_seconds` | gauge | — |
+| `longue_vue_ingest_gw_cert_reload_total` | counter | `result` (success/failure) |
+| `longue_vue_ingest_gw_cert_renewal_failures_total` | counter | — |
+| `longue_vue_ingest_gw_body_bytes` | histogram (powers-of-two, 1 KiB to 16 MiB) | `route` |
+| `longue_vue_ingest_gw_inflight_requests` | gauge | — |
+| `longue_vue_ingest_gw_build_info` | gauge (always 1) | `version`, `commit`, `go_version` |
 
 Argosd ingest-listener metrics (extending existing):
 
-- `argos_http_requests_total{listener="ingest"|"public"}` — split traffic by listener.
-- `argos_auth_verify_total{result}` — calls to `POST /v1/auth/verify`.
-- `argos_ingest_listener_client_cert_failures_total{reason}` — `bad_ca` / `expired` / `cn_not_allowed` / `none_provided`.
+- `longue_vue_http_requests_total{listener="ingest"|"public"}` — split traffic by listener.
+- `longue_vue_auth_verify_total{result}` — calls to `POST /v1/auth/verify`.
+- `longue_vue_ingest_listener_client_cert_failures_total{reason}` — `bad_ca` / `expired` / `cn_not_allowed` / `none_provided`.
 
 Suggested alerts (shipped as a values-block in the chart):
 
 | Alert | Expression | Severity |
 |---|---|---|
-| `IngestGwCertExpiringSoon` | `argos_ingest_gw_cert_not_after_seconds - time() < 3600` | warning <1 h, critical <15 min |
-| `IngestGwCertReloadFailing` | `increase(argos_ingest_gw_cert_reload_total{result="failure"}[10m]) > 0` | warning |
-| `IngestGwUpstream5xx` | `rate(argos_ingest_gw_requests_total{status_class="5xx"}[5m]) > 0.05 * rate(argos_ingest_gw_requests_total[5m])` | warning |
-| `IngestGwHighDenials` | `rate(argos_ingest_gw_requests_total{outcome=~"denied_.*"}[5m]) > 1` | info — likely scanner / misconfigured collector |
-| `IngestGwArgosdUnreachable` | `rate(argos_ingest_gw_requests_total{outcome="upstream_error"}[2m]) > 0 and up{job="argosd"} == 0` | critical — paging |
-| `IngestGwClientCertFailures` | `increase(argos_ingest_listener_client_cert_failures_total[10m]) > 0` | warning |
+| `IngestGwCertExpiringSoon` | `longue_vue_ingest_gw_cert_not_after_seconds - time() < 3600` | warning <1 h, critical <15 min |
+| `IngestGwCertReloadFailing` | `increase(longue_vue_ingest_gw_cert_reload_total{result="failure"}[10m]) > 0` | warning |
+| `IngestGwUpstream5xx` | `rate(longue_vue_ingest_gw_requests_total{status_class="5xx"}[5m]) > 0.05 * rate(longue_vue_ingest_gw_requests_total[5m])` | warning |
+| `IngestGwHighDenials` | `rate(longue_vue_ingest_gw_requests_total{outcome=~"denied_.*"}[5m]) > 1` | info — likely scanner / misconfigured collector |
+| `IngestGwArgosdUnreachable` | `rate(longue_vue_ingest_gw_requests_total{outcome="upstream_error"}[2m]) > 0 and up{job="argosd"} == 0` | critical — paging |
+| `IngestGwClientCertFailures` | `increase(longue_vue_ingest_listener_client_cert_failures_total[10m]) > 0` | warning |
 
 Gateway logs (structured JSON via `slog`, single line per request, written after the response):
 

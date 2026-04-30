@@ -67,5 +67,5 @@ The impact endpoint exports Prometheus metrics:
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `argos_impact_queries_total` | counter | `entity_type` | Number of impact graph queries. |
-| `argos_impact_query_duration_seconds` | histogram | `entity_type` | Query duration in seconds. |
+| `longue_vue_impact_queries_total` | counter | `entity_type` | Number of impact graph queries. |
+| `longue_vue_impact_query_duration_seconds` | histogram | `entity_type` | Query duration in seconds. |
