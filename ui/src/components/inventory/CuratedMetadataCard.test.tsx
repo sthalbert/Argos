@@ -3,15 +3,10 @@ import { render } from '@testing-library/react';
 import { CuratedMetadataCard } from './CuratedMetadataCard';
 import type { CuratedValues } from './CuratedMetadataCard';
 import { MeProvider } from '../../me';
-import type { Me } from '../../api';
+import { fixtureMe } from '../../test/fixtures';
 
-const viewerMe: Me = { kind: 'user', id: 'u1', scopes: ['read'], role: 'viewer' };
-const adminMe: Me = {
-  kind: 'user',
-  id: 'u1',
-  scopes: ['read', 'write', 'delete', 'admin', 'audit'],
-  role: 'admin',
-};
+const adminMe = { ...fixtureMe }; // already admin
+const viewerMe = { ...fixtureMe, role: 'viewer' as const, scopes: ['read'] as string[] };
 
 const noopSave = vi.fn().mockResolvedValue(undefined);
 const noopSaved = vi.fn();

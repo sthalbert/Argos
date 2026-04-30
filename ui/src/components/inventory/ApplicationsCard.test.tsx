@@ -2,15 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { render } from '@testing-library/react';
 import { ApplicationsCard } from './ApplicationsCard';
 import { MeProvider } from '../../me';
-import type { Me, VMApplication } from '../../api';
+import type { VMApplication } from '../../api';
+import { fixtureMe } from '../../test/fixtures';
 
-const viewerMe: Me = { kind: 'user', id: 'u1', scopes: ['read'], role: 'viewer' };
-const adminMe: Me = {
-  kind: 'user',
-  id: 'u1',
-  scopes: ['read', 'write', 'delete', 'admin', 'audit'],
-  role: 'admin',
-};
+const adminMe = { ...fixtureMe }; // already admin
+const viewerMe = { ...fixtureMe, role: 'viewer' as const, scopes: ['read'] as string[] };
 
 const noopSave = vi.fn().mockResolvedValue(undefined);
 const noopSaved = vi.fn();
@@ -61,13 +57,13 @@ describe('ApplicationsCard', () => {
   });
 
   it('renders edit-hint empty message for admin when list is empty', () => {
-    const { container } = render(
+    const { getByText } = render(
       <MeProvider value={adminMe}>
         <ApplicationsCard applications={[]} onSave={noopSave} onSaved={noopSaved} />
       </MeProvider>,
     );
-    // The longer hint contains "No applications declared"
-    expect(container.textContent).toContain('No applications declared');
+    // The admin branch shows a longer hint mentioning the EOL scanner — viewer only sees 'No applications declared.'
+    expect(getByText(/EOL scanner uses this to track product lifecycle/)).toBeInTheDocument();
   });
 
   it('renders the Edit button for admin role', () => {
