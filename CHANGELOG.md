@@ -6,10 +6,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 — the REST and database contracts may still change incompatibly before
 `v1.0.0`.
 
-## [0.12.1] — 2026-04-29
+## [0.12.1] — 2026-04-30
 
-Helm chart 0.15.1 / appVersion 0.12.1. UI hotfix for the VM applications
-editor introduced in 0.12.0.
+Helm charts realigned on `appVersion 0.12.1` across the family
+(`argos` 0.15.1, `argos-collector` 0.1.1, `argos-ingest-gw` 0.1.2,
+`argos-vm-collector` 0.1.1). UI hotfix for the VM applications editor
+introduced in 0.12.0; the collector binaries are unchanged but their
+charts bump in lockstep so `helm list` shows a single coherent
+appVersion across an Argos deployment.
 
 ### Fixed
 
