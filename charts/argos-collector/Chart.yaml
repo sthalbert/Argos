@@ -7,8 +7,8 @@ description: >-
   independently of the umbrella `argos` chart so the source-cluster release
   contains only what belongs in that cluster.
 type: application
-version: 0.1.1
-appVersion: "0.12.1"
+version: 0.1.2
+appVersion: "0.12.2"
 home: https://github.com/sthalbert/Argos
 sources:
   - https://github.com/sthalbert/Argos
