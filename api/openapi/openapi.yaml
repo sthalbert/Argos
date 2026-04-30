@@ -1,11 +1,11 @@
 openapi: 3.1.0
 
 info:
-  title: Argos CMDB API
+  title: longue-vue CMDB API
   version: 0.1.0
   summary: Kubernetes-centric CMDB aligned with the ANSSI SecNumCloud framework.
   description: |
-    REST API for **Argos**, a CMDB for Kubernetes environments aligned with the
+    REST API for **longue-vue**, a CMDB for Kubernetes environments aligned with the
     ANSSI SecNumCloud (SNC) qualification framework.
 
     This version (0.1.0) is a walking skeleton covering:
