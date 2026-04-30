@@ -1,6 +1,6 @@
 # Monitoring
 
-Argos exposes Prometheus metrics for HTTP request tracking, collector health, and build information.
+longue-vue exposes Prometheus metrics for HTTP request tracking, collector health, and build information.
 
 ## Metrics endpoint
 
@@ -47,7 +47,7 @@ The standard `go_*` and `process_*` collectors from `client_golang` are also reg
 
 ### Annotation-based (kube-prometheus)
 
-The argosd Deployment carries the standard annotations:
+The longue-vue Deployment carries the standard annotations:
 
 ```yaml
 metadata:
@@ -65,14 +65,14 @@ Most Prometheus deployments with annotation-based service discovery will pick th
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: argosd
-  namespace: argos-system
+  name: longue-vue
+  namespace: longue-vue-system
   labels:
-    app.kubernetes.io/name: argos
+    app.kubernetes.io/name: longue-vue
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/name: argos
+      app.kubernetes.io/name: longue-vue
   endpoints:
     - port: http
       path: /metrics
@@ -85,12 +85,12 @@ spec:
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:
-  name: argosd
-  namespace: argos-system
+  name: longue-vue
+  namespace: longue-vue-system
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/name: argos
+      app.kubernetes.io/name: longue-vue
   podMetricsEndpoints:
     - port: http
       path: /metrics
@@ -110,7 +110,7 @@ Fire if any resource kind has not been polled in 10 minutes:
   labels:
     severity: warning
   annotations:
-    summary: "Argos collector stale for {{ $labels.cluster }}/{{ $labels.resource }}"
+    summary: "longue-vue collector stale for {{ $labels.cluster }}/{{ $labels.resource }}"
     description: "No successful poll in the last 10 minutes."
 ```
 
@@ -125,7 +125,7 @@ Fire if the collector encounters persistent errors:
   labels:
     severity: warning
   annotations:
-    summary: "Argos collector errors for {{ $labels.cluster }}/{{ $labels.resource }} ({{ $labels.phase }})"
+    summary: "longue-vue collector errors for {{ $labels.cluster }}/{{ $labels.resource }} ({{ $labels.phase }})"
     description: "Sustained collector errors over the last 10 minutes."
 ```
 
@@ -144,7 +144,7 @@ Fire if more than 5% of requests return 5xx:
   labels:
     severity: critical
   annotations:
-    summary: "Argos HTTP 5xx rate above 5%"
+    summary: "longue-vue HTTP 5xx rate above 5%"
 ```
 
 ### HTTP latency
@@ -160,7 +160,7 @@ Fire if p95 request duration exceeds 2 seconds:
   labels:
     severity: warning
   annotations:
-    summary: "Argos p95 latency above 2s"
+    summary: "longue-vue p95 latency above 2s"
 ```
 
 ## Grafana dashboard tips

@@ -1,10 +1,10 @@
 # End-of-Life Enrichment
 
-Argos can automatically flag software running past its end-of-life date. The EOL enricher periodically queries [endoflife.date](https://endoflife.date) and annotates clusters, nodes, and non-Kubernetes platform VMs with lifecycle status so you can spot obsolescence risk at a glance.
+longue-vue can automatically flag software running past its end-of-life date. The EOL enricher periodically queries [endoflife.date](https://endoflife.date) and annotates clusters, nodes, and non-Kubernetes platform VMs with lifecycle status so you can spot obsolescence risk at a glance.
 
 ## How it works
 
-The enricher runs as a background goroutine inside argosd. On each tick it:
+The enricher runs as a background goroutine inside longue-vue. On each tick it:
 
 1. Reads the `eol_enabled` setting from the database. If disabled, the tick is skipped.
 2. Lists every cluster in the CMDB and processes them, including their nodes.
@@ -27,7 +27,7 @@ The enricher picks up the change on its next tick (default: every 2 minutes). No
 
 To disable it again, click **Disable** on the same card.
 
-> **Alternative: env var.** Setting `LONGUE_VUE_EOL_ENABLED=true` on the argosd Deployment seeds the database setting to `true` on startup. The UI toggle overrides it at runtime. See [Configuration](configuration.md) for all env vars.
+> **Alternative: env var.** Setting `LONGUE_VUE_EOL_ENABLED=true` on the longue-vue Deployment seeds the database setting to `true` on startup. The UI toggle overrides it at runtime. See [Configuration](configuration.md) for all env vars.
 
 ## Use the EOL inventory
 
@@ -139,7 +139,7 @@ These annotations are visible on the entity detail pages (cluster, node, and vir
 
 ## Configuration
 
-The enricher behaviour is tuned with environment variables on the argosd Deployment. See the [Configuration Reference](configuration.md) for the full table. Key variables:
+The enricher behaviour is tuned with environment variables on the longue-vue Deployment. See the [Configuration Reference](configuration.md) for the full table. Key variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -175,6 +175,6 @@ The enricher makes outbound HTTPS requests to `endoflife.date`. In environments 
 ## Limitations
 
 - **Container images are not matched.** Image tags are unstructured (`nginx:1.25-alpine`, `myapp:latest`) and matching them to endoflife.date products would require a registry-aware parser. This is planned for a future version.
-- **VM application data is operator-curated.** The enricher annotates whatever version was last written to the `applications` field. If a VM's Vault version is upgraded without updating Argos, the EOL annotation reflects the old version. The `added_at` timestamp on each application entry is shown in the UI to help spot stale records. An in-guest agent for automatic discovery is planned for a future version.
+- **VM application data is operator-curated.** The enricher annotates whatever version was last written to the `applications` field. If a VM's Vault version is upgraded without updating longue-vue, the EOL annotation reflects the old version. The `added_at` timestamp on each application entry is shown in the UI to help spot stale records. An in-guest agent for automatic discovery is planned for a future version.
 - **Data accuracy depends on endoflife.date.** The project is community-maintained. Verify critical EOL decisions against vendor documentation.
 - **A typo in `LONGUE_VUE_CLUSTER_NAME` creates a new cluster.** The auto-created cluster will be enriched, but with the wrong name. Verify cluster names after first deployment.

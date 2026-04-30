@@ -256,7 +256,7 @@ Filters compose with the existing region / cloud-account / power-state dropdowns
 
 ### 6. Configuration
 
-No new env vars on argosd. The enricher's existing `LONGUE_VUE_EOL_*` variables (interval, approaching-days, base URL, enabled) and the runtime `eol_enabled` setting toggle apply identically — the new VM pass runs in the same goroutine, gated by the same flag. The collector binaries (`argos-collector`, `argos-vm-collector`) are unchanged.
+No new env vars on longue-vue. The enricher's existing `LONGUE_VUE_EOL_*` variables (interval, approaching-days, base URL, enabled) and the runtime `eol_enabled` setting toggle apply identically — the new VM pass runs in the same goroutine, gated by the same flag. The collector binaries (`longue-vue-collector`, `longue-vue-vm-collector`) are unchanged.
 
 ### 7. Metrics
 
@@ -400,7 +400,7 @@ No new metric for the search filters — the existing `longue_vue_http_requests_
   - `README.md`: ADR-0019 row in the index; small features-list addition ("Application inventory and EOL enrichment for platform VMs").
   - `CHANGELOG.md`: `Added` entry under the next minor version.
 
-- **IMP-010** Helm charts: no chart-version changes for the collector / vm-collector / ingest-gw charts (they are unaffected). `charts/argos/Chart.yaml` `version` and `appVersion` bump as part of the release.
+- **IMP-010** Helm charts: no chart-version changes for the collector / vm-collector / ingest-gw charts (they are unaffected). `charts/longue-vue/Chart.yaml` `version` and `appVersion` bump as part of the release.
 
 ## Future work
 

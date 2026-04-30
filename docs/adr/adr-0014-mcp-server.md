@@ -16,7 +16,7 @@ superseded_by: ""
 
 ## Context
 
-Argos exposes a REST API that humans use via the web UI and machines use via bearer tokens. However, the growing adoption of AI assistants (Claude, ChatGPT, Copilot) in operations teams creates a new interaction pattern: operators want to ask natural-language questions about their Kubernetes inventory.
+longue-vue exposes a REST API that humans use via the web UI and machines use via bearer tokens. However, the growing adoption of AI assistants (Claude, ChatGPT, Copilot) in operations teams creates a new interaction pattern: operators want to ask natural-language questions about their Kubernetes inventory.
 
 Examples of questions operators ask today that require manual navigation:
 
@@ -26,13 +26,13 @@ Examples of questions operators ask today that require manual navigation:
 - "Which namespaces have no owner assigned?"
 - "List all StatefulSets across all clusters with their PVC bindings"
 
-The [Model Context Protocol (MCP)](https://modelcontextprotocol.io) is an open standard that lets AI agents discover and call tools exposed by servers. By embedding an MCP server in argosd, any MCP-compatible AI client can query the CMDB without custom integration code.
+The [Model Context Protocol (MCP)](https://modelcontextprotocol.io) is an open standard that lets AI agents discover and call tools exposed by servers. By embedding an MCP server in longue-vue, any MCP-compatible AI client can query the CMDB without custom integration code.
 
 SecNumCloud chapter 8 encourages automated asset interrogation. An MCP server makes the CMDB queryable by AI assistants while respecting the existing auth model.
 
 ## Decision
 
-**Embed an MCP server in argosd** that exposes the CMDB inventory as read-only tools. The server runs as an additional listener alongside the HTTP API, using the stdio or SSE transport. AI agents authenticate with the same bearer tokens (PATs) used by machines today.
+**Embed an MCP server in longue-vue** that exposes the CMDB inventory as read-only tools. The server runs as an additional listener alongside the HTTP API, using the stdio or SSE transport. AI agents authenticate with the same bearer tokens (PATs) used by machines today.
 
 ### Transport
 
@@ -77,12 +77,12 @@ MCP resources expose static/slow-changing reference data:
 
 | Resource | URI | Description |
 |----------|-----|-------------|
-| `argos://schema` | — | CMDB entity types, their fields, and relationships |
-| `argos://eol-products` | — | List of products tracked for EOL enrichment |
+| `longue-vue://schema` | — | CMDB entity types, their fields, and relationships |
+| `longue-vue://eol-products` | — | List of products tracked for EOL enrichment |
 
 ### Authentication
 
-- **SSE transport**: The MCP client sends `Authorization: Bearer argos_pat_...` in the HTTP headers. The existing auth middleware validates the token and extracts scopes. All MCP tools require `read` scope.
+- **SSE transport**: The MCP client sends `Authorization: Bearer longue_vue_pat_...` in the HTTP headers. The existing auth middleware validates the token and extracts scopes. All MCP tools require `read` scope.
 - **stdio transport**: The token is passed via `LONGUE_VUE_MCP_TOKEN` environment variable. The server validates it on startup and uses its scopes for all subsequent tool calls.
 
 No new auth mechanism is introduced. The existing PAT system (ADR-0007) covers both human and AI callers.
@@ -95,7 +95,7 @@ AI Agent (Claude Code, Copilot, etc.)
     | MCP protocol (stdio or SSE)
     v
 ┌────────────────────────────────┐
-│           argosd               │
+│           longue-vue               │
 │                                │
 │  ┌──────────┐  ┌────────────┐ │
 │  │ HTTP API │  │ MCP Server │ │
@@ -109,7 +109,7 @@ AI Agent (Claude Code, Copilot, etc.)
 └────────────────────────────────┘
 ```
 
-The MCP server is a separate goroutine in argosd (same pattern as the collector and EOL enricher). It shares the same `api.Store` — no new database queries needed. Each MCP tool is a thin wrapper that calls the existing store methods and formats the response.
+The MCP server is a separate goroutine in longue-vue (same pattern as the collector and EOL enricher). It shares the same `api.Store` — no new database queries needed. Each MCP tool is a thin wrapper that calls the existing store methods and formats the response.
 
 ### Configuration
 
@@ -117,14 +117,14 @@ The MCP server is a separate goroutine in argosd (same pattern as the collector 
 LONGUE_VUE_MCP_ENABLED=true                  # seeds the DB setting on startup (default: false)
 LONGUE_VUE_MCP_TRANSPORT=sse                 # default: stdio
 LONGUE_VUE_MCP_ADDR=:8090                    # default: :8090 (SSE only)
-LONGUE_VUE_MCP_TOKEN=argos_pat_...           # required for stdio transport
+LONGUE_VUE_MCP_TOKEN=longue_vue_pat_...           # required for stdio transport
 ```
 
 Disabled by default so existing deployments are unaffected.
 
 ### Runtime toggle (Admin panel)
 
-The MCP server is controlled at runtime via the `mcp_enabled` setting in the `settings` table — the same single-row table used by the EOL enricher toggle (`eol_enabled`). Admins toggle it from **Admin > Settings** in the web UI without restarting argosd.
+The MCP server is controlled at runtime via the `mcp_enabled` setting in the `settings` table — the same single-row table used by the EOL enricher toggle (`eol_enabled`). Admins toggle it from **Admin > Settings** in the web UI without restarting longue-vue.
 
 - `LONGUE_VUE_MCP_ENABLED` env var **seeds** the database setting on startup (same semantics as `LONGUE_VUE_EOL_ENABLED`). The admin UI overrides it at runtime.
 - When disabled via the admin panel, the MCP server rejects all tool calls with an error ("MCP server is disabled by administrator") but keeps the listener alive — no restart needed to re-enable.
@@ -166,7 +166,7 @@ This gives admins full control: enable MCP for a demo, disable it after an audit
 
 ### Build a separate MCP proxy service
 
-- **Description**: A standalone binary that connects to argosd's REST API and exposes MCP tools.
+- **Description**: A standalone binary that connects to longue-vue's REST API and exposes MCP tools.
 - **Rejection reason**: Adds a second deployment target, a second token to manage, and network round-trips. The in-process approach (same as collector and EOL enricher) is simpler and consistent with the existing architecture.
 
 ### Use OpenAI function calling format instead of MCP
@@ -179,7 +179,7 @@ This gives admins full control: enable MCP for a demo, disable it after an audit
 - **IMP-001**: Create `internal/mcp/` package. `Server` struct with `Run(ctx)` method (same pattern as collector and EOL enricher). Uses the existing `api.Store` interface.
 - **IMP-002**: Add `github.com/mark3labs/mcp-go` (or `github.com/anthropics/mcp-go` if available) to `go.mod` for MCP protocol handling.
 - **IMP-003**: Each tool is a function registered with the MCP server. Tool implementations are thin wrappers around existing store methods.
-- **IMP-004**: Wire the MCP server in `cmd/argosd/main.go` behind `LONGUE_VUE_MCP_ENABLED`. Start after the store is ready, stop on context cancellation.
+- **IMP-004**: Wire the MCP server in `cmd/longue-vue/main.go` behind `LONGUE_VUE_MCP_ENABLED`. Start after the store is ready, stop on context cancellation.
 - **IMP-005**: Add Prometheus metrics: `longue_vue_mcp_tool_calls_total{tool}`, `longue_vue_mcp_tool_duration_seconds{tool}`.
 - **IMP-006**: Tests: unit tests for each tool with a fake store, integration test that starts the MCP server and calls tools via the SDK client.
 

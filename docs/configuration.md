@@ -1,8 +1,8 @@
 # Configuration Reference
 
-All Argos configuration is environment-variable based. There are no config files.
+All longue-vue configuration is environment-variable based. There are no config files.
 
-## argosd
+## longue-vue
 
 The main daemon that serves the REST API, web UI, and optionally runs the pull-mode collector.
 
@@ -10,7 +10,7 @@ The main daemon that serves the REST API, web UI, and optionally runs the pull-m
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `LONGUE_VUE_DATABASE_URL` | yes | -- | PostgreSQL connection string (DSN). Example: `postgres://user:pass@host:5432/argos?sslmode=require`. |
+| `LONGUE_VUE_DATABASE_URL` | yes | -- | PostgreSQL connection string (DSN). Example: `postgres://user:pass@host:5432/longue-vue?sslmode=require`. |
 | `LONGUE_VUE_ADDR` | no | `:8080` | HTTP listen address. Set to `:443` or `127.0.0.1:8080` as needed. |
 | `LONGUE_VUE_AUTO_MIGRATE` | no | `true` | Run embedded goose migrations on startup. Set to `false` if you manage migrations externally. |
 | `LONGUE_VUE_SHUTDOWN_TIMEOUT` | no | `15s` | Graceful shutdown budget on SIGINT / SIGTERM. In-flight requests drain until this deadline. |
@@ -19,7 +19,7 @@ The main daemon that serves the REST API, web UI, and optionally runs the pull-m
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `LONGUE_VUE_BOOTSTRAP_ADMIN_PASSWORD` | no | random 16-char string | Password for the auto-created `admin` user on first boot. Only consulted when no active admin exists in the database. If unset, argosd generates a random password and prints it **once** to the startup log. |
+| `LONGUE_VUE_BOOTSTRAP_ADMIN_PASSWORD` | no | random 16-char string | Password for the auto-created `admin` user on first boot. Only consulted when no active admin exists in the database. If unset, longue-vue generates a random password and prints it **once** to the startup log. |
 
 ### Session and cookies
 
@@ -29,17 +29,17 @@ The main daemon that serves the REST API, web UI, and optionally runs the pull-m
 
 ### Public-listener TLS posture (ADR-0017)
 
-argosd supports two postures for the public listener; pick exactly one
+longue-vue supports two postures for the public listener; pick exactly one
 and configure the matching variables. `LONGUE_VUE_REQUIRE_HTTPS=true` makes
 the daemon refuse to start unless one of the two is fully configured —
 failing closed beats accidentally serving credentials over plain HTTP.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `LONGUE_VUE_PUBLIC_LISTEN_TLS_CERT` | for native TLS | -- | Path to a PEM-encoded TLS certificate. When set with `LONGUE_VUE_PUBLIC_LISTEN_TLS_KEY`, argosd terminates TLS itself (TLS 1.3 floor, session tickets disabled). The keypair is reloaded on the next TLS handshake whenever the cert file's mtime changes — covers cert-manager rotations, Vault Agent atomic-rename, and manual rewrites. |
-| `LONGUE_VUE_PUBLIC_LISTEN_TLS_KEY` | for native TLS | -- | Path to the matching PEM-encoded private key. Must be readable by the argosd process (UID 65532 in the distroless image). |
-| `LONGUE_VUE_TRUSTED_PROXIES` | for trusted-proxy posture | (empty = none) | Comma-separated CIDR list of TLS-terminating proxies whose `X-Forwarded-For` and `X-Forwarded-Proto` argosd will honor. Empty = ignore both headers entirely (the secure default). Example: `10.0.0.0/8,172.16.0.0/12`. Set this when running behind ingress-nginx, Envoy, a cloud LB, or any other TLS-terminating proxy so audit logs, rate-limit buckets, and the Secure-cookie check see the real client transport instead of the proxy's. |
-| `LONGUE_VUE_REQUIRE_HTTPS` | no | `false` | When `true`, argosd refuses to start unless either `LONGUE_VUE_PUBLIC_LISTEN_TLS_CERT` + `_KEY` are set (native TLS) OR `LONGUE_VUE_TRUSTED_PROXIES` is non-empty AND `LONGUE_VUE_SESSION_SECURE_COOKIE=always` (trusted-proxy posture). Also force-emits `Strict-Transport-Security` so browsers refuse plaintext fallback. |
+| `LONGUE_VUE_PUBLIC_LISTEN_TLS_CERT` | for native TLS | -- | Path to a PEM-encoded TLS certificate. When set with `LONGUE_VUE_PUBLIC_LISTEN_TLS_KEY`, longue-vue terminates TLS itself (TLS 1.3 floor, session tickets disabled). The keypair is reloaded on the next TLS handshake whenever the cert file's mtime changes — covers cert-manager rotations, Vault Agent atomic-rename, and manual rewrites. |
+| `LONGUE_VUE_PUBLIC_LISTEN_TLS_KEY` | for native TLS | -- | Path to the matching PEM-encoded private key. Must be readable by the longue-vue process (UID 65532 in the distroless image). |
+| `LONGUE_VUE_TRUSTED_PROXIES` | for trusted-proxy posture | (empty = none) | Comma-separated CIDR list of TLS-terminating proxies whose `X-Forwarded-For` and `X-Forwarded-Proto` longue-vue will honor. Empty = ignore both headers entirely (the secure default). Example: `10.0.0.0/8,172.16.0.0/12`. Set this when running behind ingress-nginx, Envoy, a cloud LB, or any other TLS-terminating proxy so audit logs, rate-limit buckets, and the Secure-cookie check see the real client transport instead of the proxy's. |
+| `LONGUE_VUE_REQUIRE_HTTPS` | no | `false` | When `true`, longue-vue refuses to start unless either `LONGUE_VUE_PUBLIC_LISTEN_TLS_CERT` + `_KEY` are set (native TLS) OR `LONGUE_VUE_TRUSTED_PROXIES` is non-empty AND `LONGUE_VUE_SESSION_SECURE_COOKIE=always` (trusted-proxy posture). Also force-emits `Strict-Transport-Security` so browsers refuse plaintext fallback. |
 
 ### OIDC (optional)
 
@@ -47,10 +47,10 @@ OIDC is disabled by default. Set `LONGUE_VUE_OIDC_ISSUER` to enable it.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `LONGUE_VUE_OIDC_ISSUER` | no | (empty = off) | OIDC issuer URL. argosd fetches the `.well-known/openid-configuration` from this URL on startup and fails fatally if unreachable. Example: `https://idp.example.com/realms/argos`. |
+| `LONGUE_VUE_OIDC_ISSUER` | no | (empty = off) | OIDC issuer URL. longue-vue fetches the `.well-known/openid-configuration` from this URL on startup and fails fatally if unreachable. Example: `https://idp.example.com/realms/longue-vue`. |
 | `LONGUE_VUE_OIDC_CLIENT_ID` | when OIDC enabled | -- | OAuth 2.0 client ID registered at the IdP. |
 | `LONGUE_VUE_OIDC_CLIENT_SECRET` | for confidential clients | -- | OAuth 2.0 client secret. Omit for public clients (not recommended). |
-| `LONGUE_VUE_OIDC_REDIRECT_URL` | when OIDC enabled | -- | Full callback URL registered at the IdP. Must be `https://<argos-host>/v1/auth/oidc/callback`. |
+| `LONGUE_VUE_OIDC_REDIRECT_URL` | when OIDC enabled | -- | Full callback URL registered at the IdP. Must be `https://<longue-vue-host>/v1/auth/oidc/callback`. |
 | `LONGUE_VUE_OIDC_SCOPES` | no | `openid,email,profile` | Comma-separated list of scopes to request from the IdP. |
 | `LONGUE_VUE_OIDC_LABEL` | no | `OIDC` | Text shown on the "Sign in with ..." button in the UI. |
 
@@ -81,8 +81,8 @@ Example:
 
 ```json
 [
-  {"name":"prod","kubeconfig":"/etc/argos/kubeconfigs/prod.yaml"},
-  {"name":"staging","kubeconfig":"/etc/argos/kubeconfigs/staging.yaml"},
+  {"name":"prod","kubeconfig":"/etc/longue-vue/kubeconfigs/prod.yaml"},
+  {"name":"staging","kubeconfig":"/etc/longue-vue/kubeconfigs/staging.yaml"},
   {"name":"in-cluster","kubeconfig":""}
 ]
 ```
@@ -109,7 +109,7 @@ The MCP (Model Context Protocol) server is disabled by default. It exposes read-
 | `LONGUE_VUE_MCP_ENABLED` | no | `false` | Enable the MCP server. When set, its value is also written to the `mcp_enabled` database setting on boot. The admin can override it at runtime via Admin > Settings. |
 | `LONGUE_VUE_MCP_TRANSPORT` | no | `sse` | Transport protocol. Values: `sse` (Server-Sent Events over HTTP) or `stdio` (standard I/O, for local tool integration). |
 | `LONGUE_VUE_MCP_ADDR` | no | `:3001` | Listen address for the SSE transport. Ignored when transport is `stdio`. |
-| `LONGUE_VUE_MCP_TOKEN` | no | -- | Bearer token required for MCP requests. When unset, the MCP server inherits the standard argosd bearer token authentication. |
+| `LONGUE_VUE_MCP_TOKEN` | no | -- | Bearer token required for MCP requests. When unset, the MCP server inherits the standard longue-vue bearer token authentication. |
 
 ### DMZ ingest gateway (ADR-0016)
 
@@ -117,11 +117,11 @@ The ingest listener is disabled by default. Set `LONGUE_VUE_INGEST_LISTEN_ADDR` 
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `LONGUE_VUE_INGEST_LISTEN_ADDR` | no | empty (disabled) | Bind address for the mTLS-only ingest listener. Setting this variable enables the second listener. Example: `:8443`. When unset, none of the ingest listener machinery starts and argosd behaves identically to today. |
+| `LONGUE_VUE_INGEST_LISTEN_ADDR` | no | empty (disabled) | Bind address for the mTLS-only ingest listener. Setting this variable enables the second listener. Example: `:8443`. When unset, none of the ingest listener machinery starts and longue-vue behaves identically to today. |
 | `LONGUE_VUE_INGEST_LISTEN_TLS_CERT` | when ingest enabled | — | Path to a PEM-encoded server certificate presented on the ingest listener. Must be signed by a CA your mTLS client (the gateway) trusts. |
 | `LONGUE_VUE_INGEST_LISTEN_TLS_KEY` | when ingest enabled | — | Path to the private key matching `LONGUE_VUE_INGEST_LISTEN_TLS_CERT`. |
 | `LONGUE_VUE_INGEST_LISTEN_CLIENT_CA_FILE` | when ingest enabled | — | Path to a PEM-encoded CA bundle. Only client certs signed by this CA are accepted at the mTLS handshake. Typically the Vault PKI intermediate, an internal CA, or the cert-manager ClusterIssuer CA. |
-| `LONGUE_VUE_INGEST_LISTEN_CLIENT_CN_ALLOW` | no | empty (any CN) | Comma-separated list of allowed Subject CNs on the client cert. When set (e.g. `argos-ingest-gw`), blocks any other cert the same CA might issue. Leave unset to accept any cert signed by the CA above. |
+| `LONGUE_VUE_INGEST_LISTEN_CLIENT_CN_ALLOW` | no | empty (any CN) | Comma-separated list of allowed Subject CNs on the client cert. When set (e.g. `longue-vue-ingest-gw`), blocks any other cert the same CA might issue. Leave unset to accept any cert signed by the CA above. |
 
 ---
 
@@ -131,7 +131,7 @@ When you catalogue cloud accounts (ADR-0015), the cloud-provider Secret Keys are
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `LONGUE_VUE_SECRETS_MASTER_KEY` | when cloud accounts have credentials | -- | Base64-encoded 32-byte AES-256 master key. argosd refuses to start if any `cloud_accounts` row has a non-NULL `secret_key_encrypted` and this variable is unset or malformed. Lengths other than 32 bytes (after base64 decode) are rejected at startup. |
+| `LONGUE_VUE_SECRETS_MASTER_KEY` | when cloud accounts have credentials | -- | Base64-encoded 32-byte AES-256 master key. longue-vue refuses to start if any `cloud_accounts` row has a non-NULL `secret_key_encrypted` and this variable is unset or malformed. Lengths other than 32 bytes (after base64 decode) are rejected at startup. |
 
 **Generate a key:**
 
@@ -139,7 +139,7 @@ When you catalogue cloud accounts (ADR-0015), the cloud-provider Secret Keys are
 openssl rand -base64 32
 ```
 
-**Verify the right key is loaded.** On startup, argosd logs a master-key fingerprint (first 8 hex chars of the SHA-256 of the key):
+**Verify the right key is loaded.** On startup, longue-vue logs a master-key fingerprint (first 8 hex chars of the SHA-256 of the key):
 
 ```
 INFO secrets master key loaded fingerprint=3f9c1e7a
@@ -147,7 +147,7 @@ INFO secrets master key loaded fingerprint=3f9c1e7a
 
 The key itself is never logged, never returned by any endpoint, and never surfaced in the UI.
 
-> **Critical:** losing this key means every encrypted Secret Key in the database becomes unrecoverable. Argosd will start, but every vm-collector tick will fail until an admin re-enters every Secret Key by hand. Treat the master key with the same care as a database backup encryption key — back it up to your vault separately from the database itself. See [the recovery procedure](cloud-accounts.md#recover-from-master-key-loss).
+> **Critical:** losing this key means every encrypted Secret Key in the database becomes unrecoverable. longue-vue will start, but every vm-collector tick will fail until an admin re-enters every Secret Key by hand. Treat the master key with the same care as a database backup encryption key — back it up to your vault separately from the database itself. See [the recovery procedure](cloud-accounts.md#recover-from-master-key-loss).
 
 ### Security
 
@@ -165,22 +165,22 @@ The following security features are built-in and require no configuration:
 
 | Variable | Status | Migration |
 |----------|--------|-----------|
-| `LONGUE_VUE_API_TOKEN` | **removed** | argosd refuses to start if set. Migrate to admin-panel-issued tokens per ADR-0007. |
+| `LONGUE_VUE_API_TOKEN` | **removed** | longue-vue refuses to start if set. Migrate to admin-panel-issued tokens per ADR-0007. |
 | `LONGUE_VUE_API_TOKENS` | **removed** | Same as above. |
 | `LONGUE_VUE_KUBECONFIG` | **removed** | Use `LONGUE_VUE_COLLECTOR_CLUSTERS` with kubeconfig files mounted via `kubeconfigSecret`. See [How to securely provide kubeconfigs](how-to-secure-kubeconfig.md). |
 
 ---
 
-## argos-collector (push mode)
+## longue-vue-collector (push mode)
 
-The standalone push-mode collector binary. It runs inside an air-gapped or network-restricted cluster and pushes observations to a remote argosd over HTTPS. See [ADR-0009](../docs/adr/adr-0009-push-collector-for-airgapped-clusters.md) for background.
+The standalone push-mode collector binary. It runs inside an air-gapped or network-restricted cluster and pushes observations to a remote longue-vue over HTTPS. See [ADR-0009](../docs/adr/adr-0009-push-collector-for-airgapped-clusters.md) for background.
 
 ### Connection
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `LONGUE_VUE_SERVER_URL` | yes | -- | Base URL of the argosd instance. Example: `https://argos.internal:8080`. Supports a path prefix for gateway deployments: `https://gateway:443/argos`. |
-| `LONGUE_VUE_API_TOKEN` | yes | -- | Bearer token (PAT) with `write` scope, created in the argosd admin panel. Format: `argos_pat_<prefix>_<secret>`. |
+| `LONGUE_VUE_SERVER_URL` | yes | -- | Base URL of the longue-vue instance. Example: `https://longue-vue.internal:8080`. Supports a path prefix for gateway deployments: `https://gateway:443/longue-vue`. |
+| `LONGUE_VUE_API_TOKEN` | yes | -- | Bearer token (PAT) with `write` scope, created in the longue-vue admin panel. Format: `longue_vue_pat_<prefix>_<secret>`. |
 
 ### Cluster identity
 
@@ -199,10 +199,10 @@ The standalone push-mode collector binary. It runs inside an air-gapped or netwo
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `LONGUE_VUE_CA_CERT` | no | system CA pool | Path to a PEM-encoded CA certificate for verifying the argosd (or gateway) TLS certificate. Required when argosd uses a private CA. |
+| `LONGUE_VUE_CA_CERT` | no | system CA pool | Path to a PEM-encoded CA certificate for verifying the longue-vue (or gateway) TLS certificate. Required when longue-vue uses a private CA. |
 | `LONGUE_VUE_CLIENT_CERT` | no | -- | Path to a PEM-encoded client certificate for mTLS to a gateway. |
 | `LONGUE_VUE_CLIENT_KEY` | no | -- | Path to a PEM-encoded client private key for mTLS. Required when `LONGUE_VUE_CLIENT_CERT` is set. |
-| `LONGUE_VUE_EXTRA_HEADERS` | no | -- | Comma-separated `key=value` pairs injected into every outbound HTTP request. Useful for gateway routing or tenant identification. Example: `X-Tenant-Id=zad-prod,X-Route-Key=argos`. |
+| `LONGUE_VUE_EXTRA_HEADERS` | no | -- | Comma-separated `key=value` pairs injected into every outbound HTTP request. Useful for gateway routing or tenant identification. Example: `X-Tenant-Id=zad-prod,X-Route-Key=longue-vue`. |
 
 ### Proxy
 
@@ -216,15 +216,15 @@ The collector honors the standard Go proxy environment variables:
 
 ---
 
-## argos-vm-collector
+## longue-vue-vm-collector
 
-The standalone push-mode collector for non-Kubernetes platform VMs (ADR-0015). Polls a cloud provider's API, deduplicates against the kube-node inventory, and pushes the rest to argosd over HTTPS. See the [vm-collector operator guide](vm-collector.md) for deployment recipes and the [cloud accounts admin guide](cloud-accounts.md) for credential management.
+The standalone push-mode collector for non-Kubernetes platform VMs (ADR-0015). Polls a cloud provider's API, deduplicates against the kube-node inventory, and pushes the rest to longue-vue over HTTPS. See the [vm-collector operator guide](vm-collector.md) for deployment recipes and the [cloud accounts admin guide](cloud-accounts.md) for credential management.
 
 ### Connection
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `LONGUE_VUE_SERVER_URL` | yes | -- | argosd base URL. Supports a path prefix for gateway deployments. |
+| `LONGUE_VUE_SERVER_URL` | yes | -- | longue-vue base URL. Supports a path prefix for gateway deployments. |
 | `LONGUE_VUE_API_TOKEN` | yes | -- | Bearer PAT with the `vm-collector` scope, bound to the target cloud account at issuance. |
 
 ### Cloud account identity
@@ -232,7 +232,7 @@ The standalone push-mode collector for non-Kubernetes platform VMs (ADR-0015). P
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `LONGUE_VUE_VM_COLLECTOR_PROVIDER` | no | `outscale` | Cloud provider. Only `outscale` is supported in v1. |
-| `LONGUE_VUE_VM_COLLECTOR_ACCOUNT_NAME` | yes | -- | Cloud account name. Must match `cloud_accounts.name` in argosd. The collector self-registers a placeholder if the account does not exist. |
+| `LONGUE_VUE_VM_COLLECTOR_ACCOUNT_NAME` | yes | -- | Cloud account name. Must match `cloud_accounts.name` in longue-vue. The collector self-registers a placeholder if the account does not exist. |
 | `LONGUE_VUE_VM_COLLECTOR_REGION` | yes | -- | Cloud region (e.g. `eu-west-2`). |
 | `LONGUE_VUE_VM_COLLECTOR_PROVIDER_ENDPOINT_URL` | no | provider default | Override the cloud-provider API endpoint. Useful for sovereign-cloud regions or in-network mirrors. |
 
@@ -243,20 +243,20 @@ The standalone push-mode collector for non-Kubernetes platform VMs (ADR-0015). P
 | `LONGUE_VUE_VM_COLLECTOR_INTERVAL` | no | `5m` | Time between polling ticks. |
 | `LONGUE_VUE_VM_COLLECTOR_FETCH_TIMEOUT` | no | `30s` | Per-tick timeout for cloud-provider API calls. |
 | `LONGUE_VUE_VM_COLLECTOR_RECONCILE` | no | `true` | Soft-delete VMs that disappeared after each tick. |
-| `LONGUE_VUE_VM_COLLECTOR_CREDENTIAL_REFRESH` | no | `1h` | How often to re-fetch AK/SK from argosd. |
+| `LONGUE_VUE_VM_COLLECTOR_CREDENTIAL_REFRESH` | no | `1h` | How often to re-fetch AK/SK from longue-vue. |
 | `LONGUE_VUE_VM_COLLECTOR_METRICS_ADDR` | no | `127.0.0.1:9090` | Listen address for the `/metrics` endpoint. **Set to `0.0.0.0:9090` when running in Kubernetes** so the kubelet can reach the liveness probe. |
 
 ### TLS, gateway, and proxy
 
-The collector uses the same TLS / gateway / proxy variables as the kube push collector — see [`argos-collector` → TLS and gateway](#tls-and-gateway) and [`argos-collector` → Proxy](#proxy). Variables: `LONGUE_VUE_CA_CERT`, `LONGUE_VUE_CLIENT_CERT`, `LONGUE_VUE_CLIENT_KEY`, `LONGUE_VUE_EXTRA_HEADERS`, `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`.
+The collector uses the same TLS / gateway / proxy variables as the kube push collector — see [`longue-vue-collector` → TLS and gateway](#tls-and-gateway) and [`longue-vue-collector` → Proxy](#proxy). Variables: `LONGUE_VUE_CA_CERT`, `LONGUE_VUE_CLIENT_CERT`, `LONGUE_VUE_CLIENT_KEY`, `LONGUE_VUE_EXTRA_HEADERS`, `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`.
 
-> **No AK/SK env var.** Cloud-provider credentials live exclusively in argosd's `cloud_accounts` table and are fetched at runtime over HTTPS. This is deliberate — see [ADR-0015 §4](adr/adr-0015-vm-collector-for-non-kubernetes-platform-vms.md).
+> **No AK/SK env var.** Cloud-provider credentials live exclusively in longue-vue's `cloud_accounts` table and are fetched at runtime over HTTPS. This is deliberate — see [ADR-0015 §4](adr/adr-0015-vm-collector-for-non-kubernetes-platform-vms.md).
 
 ---
 
-## argos-ingest-gw
+## longue-vue-ingest-gw
 
-The DMZ ingest gateway (ADR-0016). A stateless reverse proxy that runs in the DMZ, enforces a write-only allowlist of 18 collector routes, verifies bearer PATs against argosd, and forwards approved requests over mTLS. See [How to deploy the DMZ ingest gateway](how-to-deploy-dmz-ingest-gateway.md) for the full operator walkthrough.
+The DMZ ingest gateway (ADR-0016). A stateless reverse proxy that runs in the DMZ, enforces a write-only allowlist of 18 collector routes, verifies bearer PATs against longue-vue, and forwards approved requests over mTLS. See [How to deploy the DMZ ingest gateway](how-to-deploy-dmz-ingest-gateway.md) for the full operator walkthrough.
 
 ### Inbound listener
 
@@ -267,32 +267,32 @@ The DMZ ingest gateway (ADR-0016). A stateless reverse proxy that runs in the DM
 | `LONGUE_VUE_INGEST_GW_LISTEN_TLS_KEY` | yes | — | Path to the private key matching `LONGUE_VUE_INGEST_GW_LISTEN_TLS_CERT`. |
 | `LONGUE_VUE_INGEST_GW_HEALTH_ADDR` | no | `:9090` | Bind address for the health and Prometheus metrics endpoints. No TLS. Bind to the pod IP — never expose via Envoy. |
 
-### Upstream (argosd ingest listener)
+### Upstream (longue-vue ingest listener)
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `LONGUE_VUE_INGEST_GW_UPSTREAM_URL` | yes | — | Full URL of argosd's mTLS ingest listener. Example: `https://argosd-ingest.argos.svc.cluster.local:8443`. |
-| `LONGUE_VUE_INGEST_GW_UPSTREAM_HOST` | no | host extracted from `UPSTREAM_URL` | Override the `Host:` header rewritten on proxied requests. Useful when argosd's TLS cert CN differs from the DNS name in the URL. |
+| `LONGUE_VUE_INGEST_GW_UPSTREAM_URL` | yes | — | Full URL of longue-vue's mTLS ingest listener. Example: `https://longue-vue-ingest.longue-vue.svc.cluster.local:8443`. |
+| `LONGUE_VUE_INGEST_GW_UPSTREAM_HOST` | no | host extracted from `UPSTREAM_URL` | Override the `Host:` header rewritten on proxied requests. Useful when longue-vue's TLS cert CN differs from the DNS name in the URL. |
 | `LONGUE_VUE_INGEST_GW_UPSTREAM_TIMEOUT` | no | `30s` | Per-request timeout for upstream calls. On timeout the gateway returns 503 to the collector without caching the failure. |
-| `LONGUE_VUE_INGEST_GW_UPSTREAM_CA_FILE` | yes | — | Path to the PEM-encoded CA bundle used to verify argosd's server cert. Required because argosd's ingest listener is typically signed by an internal CA. |
+| `LONGUE_VUE_INGEST_GW_UPSTREAM_CA_FILE` | yes | — | Path to the PEM-encoded CA bundle used to verify longue-vue's server cert. Required because longue-vue's ingest listener is typically signed by an internal CA. |
 
-### mTLS client certificate (gateway → argosd)
+### mTLS client certificate (gateway → longue-vue)
 
-The gateway always presents a client cert when connecting to argosd. The cert is loaded from two files and hot-reloaded on change via an `fsnotify` watcher — no pod restart required on rotation. See [the how-to guide](how-to-deploy-dmz-ingest-gateway.md) for the three ways to populate these files (Vault PKI, Kubernetes Secret / cert-manager, or file mount).
+The gateway always presents a client cert when connecting to longue-vue. The cert is loaded from two files and hot-reloaded on change via an `fsnotify` watcher — no pod restart required on rotation. See [the how-to guide](how-to-deploy-dmz-ingest-gateway.md) for the three ways to populate these files (Vault PKI, Kubernetes Secret / cert-manager, or file mount).
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `LONGUE_VUE_INGEST_GW_CLIENT_CERT_FILE` | yes | `/etc/argos-ingest-gw/tls/tls.crt` | Path to the PEM-encoded mTLS client certificate. The Helm chart writes cert data here regardless of which TLS mode (vault / secret / file) is selected. |
-| `LONGUE_VUE_INGEST_GW_CLIENT_KEY_FILE` | yes | `/etc/argos-ingest-gw/tls/tls.key` | Path to the private key matching `LONGUE_VUE_INGEST_GW_CLIENT_CERT_FILE`. |
+| `LONGUE_VUE_INGEST_GW_CLIENT_CERT_FILE` | yes | `/etc/longue-vue-ingest-gw/tls/tls.crt` | Path to the PEM-encoded mTLS client certificate. The Helm chart writes cert data here regardless of which TLS mode (vault / secret / file) is selected. |
+| `LONGUE_VUE_INGEST_GW_CLIENT_KEY_FILE` | yes | `/etc/longue-vue-ingest-gw/tls/tls.key` | Path to the private key matching `LONGUE_VUE_INGEST_GW_CLIENT_CERT_FILE`. |
 
 ### Token verification cache
 
-The gateway verifies each collector PAT against argosd once and caches the result. The cache is keyed on the full token's SHA-256 — not just its 8-character prefix.
+The gateway verifies each collector PAT against longue-vue once and caches the result. The cache is keyed on the full token's SHA-256 — not just its 8-character prefix.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `LONGUE_VUE_INGEST_GW_CACHE_TTL` | no | `60s` | How long a valid token verification result is cached. Revocation lag = this value worst case. |
-| `LONGUE_VUE_INGEST_GW_CACHE_NEGATIVE_TTL` | no | `10s` | How long an invalid token (401 from argosd) is cached. Absorbs brute-force / scanner traffic without a full verify round-trip per request. |
+| `LONGUE_VUE_INGEST_GW_CACHE_NEGATIVE_TTL` | no | `10s` | How long an invalid token (401 from longue-vue) is cached. Absorbs brute-force / scanner traffic without a full verify round-trip per request. |
 | `LONGUE_VUE_INGEST_GW_CACHE_MAX_ENTRIES` | no | `10000` | Maximum number of cache entries (LRU eviction). 10 000 entries cap RAM at ~5 MiB. |
 
 ### Request handling

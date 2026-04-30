@@ -1,6 +1,6 @@
-# Argos UI
+# longue-vue UI
 
-Vite + React + TypeScript SPA. Served by `argosd` at `/ui/` in production via
+Vite + React + TypeScript SPA. Served by `longue-vue` at `/ui/` in production via
 `go:embed`; run standalone during development.
 
 See [ADR-0006](../docs/adr/adr-0006-ui-for-audit-and-curated-metadata.md) for
@@ -41,8 +41,8 @@ scope and rationale.
 # 1. Once per checkout (or after dep bumps):
 make ui-install
 
-# 2. Terminal A — start argosd (API + embedded production bundle):
-LONGUE_VUE_DATABASE_URL=postgres://... LONGUE_VUE_API_TOKEN=dev ./bin/argosd
+# 2. Terminal A — start longue-vue (API + embedded production bundle):
+LONGUE_VUE_DATABASE_URL=postgres://... LONGUE_VUE_API_TOKEN=dev ./bin/longue-vue
 
 # 3. Terminal B — Vite dev server with HMR, proxies /v1 /healthz /metrics -> :8080:
 make ui-dev
@@ -50,14 +50,14 @@ make ui-dev
 ```
 
 For a one-command demo with seeded data, run `bash scripts/seed-demo.sh`
-after argosd is up — it populates a realistic prod / staging inventory so
+after longue-vue is up — it populates a realistic prod / staging inventory so
 every list page has something to show.
 
 ## Production build
 
 ```bash
 make ui-build      # produces ui/dist/
-make build         # argosd binary embeds ui/dist via //go:embed
+make build         # longue-vue binary embeds ui/dist via //go:embed
 ```
 
 ## Tests
@@ -89,7 +89,7 @@ then replies 404; `/v1/*` is unaffected.
 ui/
 ├── embed.go              # //go:embed all:dist (default build)
 ├── embed_noui.go         # stub under -tags noui
-├── vite.config.ts        # base: '/ui/' + dev proxy to argosd
+├── vite.config.ts        # base: '/ui/' + dev proxy to longue-vue
 ├── tsconfig.json
 ├── package.json
 ├── index.html

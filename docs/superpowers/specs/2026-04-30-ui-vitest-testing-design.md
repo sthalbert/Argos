@@ -2,7 +2,7 @@
 
 - **Date:** 2026-04-30
 - **Status:** Approved (brainstorm complete; pending implementation plan)
-- **Scope:** `ui/` only (the React + TypeScript SPA embedded into `argosd`)
+- **Scope:** `ui/` only (the React + TypeScript SPA embedded into `longue-vue`)
 
 ## Goals
 

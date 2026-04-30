@@ -1,6 +1,6 @@
 # VM Applications
 
-Platform VMs catalogued by the vm-collector arrive in Argos carrying cloud-provider metadata: AMI, instance type, IPs, VPC, security groups. That tells you the *machine*, but not what software runs inside it. Operators who need to answer "what version of Vault runs on this bastion?" today have to SSH in or check an Ansible inventory. SecNumCloud chapter 8 (asset management) requires a complete software inventory, not just hardware.
+Platform VMs catalogued by the vm-collector arrive in longue-vue carrying cloud-provider metadata: AMI, instance type, IPs, VPC, security groups. That tells you the *machine*, but not what software runs inside it. Operators who need to answer "what version of Vault runs on this bastion?" today have to SSH in or check an Ansible inventory. SecNumCloud chapter 8 (asset management) requires a complete software inventory, not just hardware.
 
 The `applications` field on a non-Kubernetes VM lets operators record exactly that: the platform software running on the guest (Vault, Cyberwatch, DNS, Nginx, OpenSSH, …), together with its version. Once declared, the EOL enricher automatically annotates the VM with lifecycle status for each application — the same `longue-vue.io/eol.<product>` annotation it already writes for Kubernetes clusters and nodes. Those annotations surface in the EOL Inventory at `/ui/eol`, so you can see Vault 1.13 flagged EOL alongside any Kubernetes node also running an outdated release.
 
@@ -36,7 +36,7 @@ The enricher annotates the VM on its next tick (default: every 2 minutes). Refre
 
 ```bash
 curl -sS -H "Authorization: Bearer $TOKEN" -X PATCH \
-  https://argos.internal:8080/v1/virtual-machines/<id> \
+  https://longue-vue.internal:8080/v1/virtual-machines/<id> \
   -H 'Content-Type: application/merge-patch+json' \
   -d '{
     "applications": [
@@ -64,7 +64,7 @@ The server normalizes each `product` value (trim, lowercase, whitespace / unders
 
 ```bash
 curl -sS -H "Authorization: Bearer $TOKEN" -X PATCH \
-  https://argos.internal:8080/v1/virtual-machines/<id> \
+  https://longue-vue.internal:8080/v1/virtual-machines/<id> \
   -H 'Content-Type: application/merge-patch+json' \
   -d '{"applications": []}'
 ```
@@ -113,28 +113,28 @@ The same filters are available as query parameters on `GET /v1/virtual-machines`
 
 ```bash
 curl -sS -H "Authorization: Bearer $TOKEN" \
-  'https://argos.internal:8080/v1/virtual-machines?application=vault'
+  'https://longue-vue.internal:8080/v1/virtual-machines?application=vault'
 ```
 
 **Find every VM running a specific Vault version:**
 
 ```bash
 curl -sS -H "Authorization: Bearer $TOKEN" \
-  'https://argos.internal:8080/v1/virtual-machines?application=vault&application_version=1.13.4'
+  'https://longue-vue.internal:8080/v1/virtual-machines?application=vault&application_version=1.13.4'
 ```
 
 **Find every VM in `eu-west-2` named "bastion":**
 
 ```bash
 curl -sS -H "Authorization: Bearer $TOKEN" \
-  'https://argos.internal:8080/v1/virtual-machines?region=eu-west-2&name=bastion'
+  'https://longue-vue.internal:8080/v1/virtual-machines?region=eu-west-2&name=bastion'
 ```
 
 **Find every VM running a specific AMI:**
 
 ```bash
 curl -sS -H "Authorization: Bearer $TOKEN" \
-  'https://argos.internal:8080/v1/virtual-machines?image=ami-75374985'
+  'https://longue-vue.internal:8080/v1/virtual-machines?image=ami-75374985'
 ```
 
 ## Image and application search across all entities

@@ -16,7 +16,7 @@ superseded_by: ""
 
 ## Context
 
-Argos inventories 9 entity types across clusters — clusters, nodes, namespaces, pods, workloads, services, ingresses, persistent volumes, and persistent volume claims — linked by foreign-key relationships. When an operator needs to upgrade a node, decommission a PV, or change a workload, they must manually trace which other components are affected by navigating detail pages one by one.
+longue-vue inventories 9 entity types across clusters — clusters, nodes, namespaces, pods, workloads, services, ingresses, persistent volumes, and persistent volume claims — linked by foreign-key relationships. When an operator needs to upgrade a node, decommission a PV, or change a workload, they must manually trace which other components are affected by navigating detail pages one by one.
 
 SecNumCloud chapter 8 (asset management) and chapter 12 (incident management) expect the CMDB to answer "what is the blast radius of a change?" quickly and reliably. ANSSI auditors routinely ask for evidence that the organisation understands the dependency chain between infrastructure and application components.
 
@@ -154,7 +154,7 @@ The endpoint requires the `read` scope (same as listing entities). The traversal
 ### Use a graph database (Neo4j, Dgraph)
 
 - **Description**: Mirror the CMDB into a graph database for traversal.
-- **Rejection reason**: Introduces a new infrastructure dependency, requires synchronisation logic, and adds operational burden. The CMDB has ~10 entity types with simple FK relationships — PostgreSQL handles this trivially. Graph databases make sense at thousands of entity types; Argos has 9.
+- **Rejection reason**: Introduces a new infrastructure dependency, requires synchronisation logic, and adds operational burden. The CMDB has ~10 entity types with simple FK relationships — PostgreSQL handles this trivially. Graph databases make sense at thousands of entity types; longue-vue has 9.
 
 ### Client-side traversal via multiple API calls
 
