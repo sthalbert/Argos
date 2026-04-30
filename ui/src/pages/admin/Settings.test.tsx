@@ -15,14 +15,15 @@ function withAdmin(el: ReactElement) {
 describe('SettingsPage', () => {
   it('renders without crashing', () => {
     renderWithRouter(withAdmin(<SettingsPage />), { initialPath: '/admin/settings' });
-    expect(screen.getAllByText(/loading|settings/i).length).toBeGreaterThan(0);
+    expect(screen.getByRole('heading', { level: 3, name: /^settings$/i })).toBeInTheDocument();
   });
 
   it('renders the settings toggles on ready', async () => {
     renderWithRouter(withAdmin(<SettingsPage />), { initialPath: '/admin/settings' });
     await waitFor(() =>
-      expect(screen.getAllByText(/eol|mcp/i).length).toBeGreaterThan(0),
+      expect(screen.getByText(/end-of-life enrichment/i)).toBeInTheDocument(),
     );
+    expect(screen.getByText(/mcp server/i)).toBeInTheDocument();
   });
 
   it('renders error state on 500', async () => {

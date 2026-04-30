@@ -27,7 +27,9 @@ describe('CloudAccountDetailPage', () => {
       routePath: '/admin/cloud-accounts/:id',
     });
     await waitFor(() =>
-      expect(screen.getAllByText(fixtureCloudAccount.name).length).toBeGreaterThan(0),
+      expect(
+        screen.getByRole('heading', { level: 2, name: new RegExp(fixtureCloudAccount.name, 'i') }),
+      ).toBeInTheDocument(),
     );
   });
 

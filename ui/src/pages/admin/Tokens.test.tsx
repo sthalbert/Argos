@@ -13,9 +13,12 @@ function withAdmin(el: ReactElement) {
 }
 
 describe('TokensPage', () => {
-  it('renders without crashing', () => {
+  it('renders without crashing', async () => {
     renderWithRouter(withAdmin(<TokensPage />), { initialPath: '/admin/tokens' });
-    expect(screen.getByText(/loading|tokens/i)).toBeInTheDocument();
+    // Wait for AsyncView to resolve; "Machine tokens" is the SectionTitle from the page itself.
+    await waitFor(() =>
+      expect(screen.getByText(/machine tokens/i)).toBeInTheDocument(),
+    );
   });
 
   it('renders the token list on ready', async () => {

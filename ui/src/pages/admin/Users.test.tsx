@@ -13,9 +13,12 @@ function withAdmin(el: ReactElement) {
 }
 
 describe('UsersPage', () => {
-  it('renders without crashing', () => {
+  it('renders without crashing', async () => {
     renderWithRouter(withAdmin(<UsersPage />), { initialPath: '/admin/users' });
-    expect(screen.getByText(/loading|users/i)).toBeInTheDocument();
+    // Wait for AsyncView to resolve; "Users" SectionTitle (h3) is from the page itself.
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { level: 3, name: /^users/i })).toBeInTheDocument(),
+    );
   });
 
   it('renders the user list on ready', async () => {

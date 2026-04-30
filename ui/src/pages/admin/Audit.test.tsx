@@ -15,7 +15,7 @@ function withAdmin(el: ReactElement) {
 describe('AuditPage', () => {
   it('renders without crashing', () => {
     renderWithRouter(withAdmin(<AuditPage />), { initialPath: '/admin/audit' });
-    expect(screen.getAllByText(/loading|audit/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/audit log/i)).toBeInTheDocument();
   });
 
   it('renders the audit event list on ready', async () => {

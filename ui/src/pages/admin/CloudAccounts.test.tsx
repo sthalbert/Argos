@@ -13,11 +13,14 @@ function withAdmin(el: ReactElement) {
 }
 
 describe('CloudAccountsPage', () => {
-  it('renders without crashing', () => {
+  it('renders without crashing', async () => {
     renderWithRouter(withAdmin(<CloudAccountsPage />), {
       initialPath: '/admin/cloud-accounts',
     });
-    expect(screen.getByText(/loading|cloud account/i)).toBeInTheDocument();
+    // Wait for AsyncView to resolve; "Cloud accounts" is the SectionTitle from the page itself.
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { name: /^cloud accounts/i })).toBeInTheDocument(),
+    );
   });
 
   it('renders the cloud account list on ready', async () => {

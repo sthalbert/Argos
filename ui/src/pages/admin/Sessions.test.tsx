@@ -13,9 +13,12 @@ function withAdmin(el: ReactElement) {
 }
 
 describe('SessionsPage', () => {
-  it('renders without crashing', () => {
+  it('renders without crashing', async () => {
     renderWithRouter(withAdmin(<SessionsPage />), { initialPath: '/admin/sessions' });
-    expect(screen.getByText(/loading|sessions/i)).toBeInTheDocument();
+    // Wait for AsyncView to resolve; "Active sessions" is the SectionTitle from the page itself.
+    await waitFor(() =>
+      expect(screen.getByText(/active sessions/i)).toBeInTheDocument(),
+    );
   });
 
   it('renders the session list on ready', async () => {
