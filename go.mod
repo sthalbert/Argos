@@ -1,4 +1,4 @@
-module github.com/sthalbert/argos
+module github.com/sthalbert/longue-vue
 
 go 1.25.5
 

@@ -24,7 +24,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/sthalbert/argos/internal/vmcollector/provider"
+	"github.com/sthalbert/longue-vue/internal/vmcollector/provider"
 )
 
 // Sentinel errors.

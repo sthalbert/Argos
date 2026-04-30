@@ -13,9 +13,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/sthalbert/argos/internal/vmcollector/apiclient"
-	"github.com/sthalbert/argos/internal/vmcollector/filter"
-	"github.com/sthalbert/argos/internal/vmcollector/provider"
+	"github.com/sthalbert/longue-vue/internal/vmcollector/apiclient"
+	"github.com/sthalbert/longue-vue/internal/vmcollector/filter"
+	"github.com/sthalbert/longue-vue/internal/vmcollector/provider"
 )
 
 // ErrCredentialsNotProvisioned is returned by ensureCredentials when the

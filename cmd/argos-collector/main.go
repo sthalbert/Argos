@@ -16,8 +16,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sthalbert/argos/internal/collector"
-	"github.com/sthalbert/argos/internal/collector/apiclient"
+	"github.com/sthalbert/longue-vue/internal/collector"
+	"github.com/sthalbert/longue-vue/internal/collector/apiclient"
 )
 
 // version is set at build time via -ldflags.

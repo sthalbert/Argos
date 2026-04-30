@@ -3,7 +3,7 @@ package filter
 import (
 	"testing"
 
-	"github.com/sthalbert/argos/internal/vmcollector/provider"
+	"github.com/sthalbert/longue-vue/internal/vmcollector/provider"
 )
 
 func TestApply(t *testing.T) {

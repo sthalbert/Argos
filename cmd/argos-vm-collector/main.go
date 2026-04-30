@@ -15,9 +15,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sthalbert/argos/internal/vmcollector"
-	"github.com/sthalbert/argos/internal/vmcollector/apiclient"
-	"github.com/sthalbert/argos/internal/vmcollector/provider"
+	"github.com/sthalbert/longue-vue/internal/vmcollector"
+	"github.com/sthalbert/longue-vue/internal/vmcollector/apiclient"
+	"github.com/sthalbert/longue-vue/internal/vmcollector/provider"
 )
 
 // version is set at build time via -ldflags.

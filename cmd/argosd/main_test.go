@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sthalbert/argos/internal/auth"
-	"github.com/sthalbert/argos/internal/httputil"
+	"github.com/sthalbert/longue-vue/internal/auth"
+	"github.com/sthalbert/longue-vue/internal/httputil"
 )
 
 func TestLoadCollectorClustersJSONPrecedence(t *testing.T) {

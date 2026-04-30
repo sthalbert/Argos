@@ -21,8 +21,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/sthalbert/argos/internal/auth"
-	"github.com/sthalbert/argos/internal/httputil"
+	"github.com/sthalbert/longue-vue/internal/auth"
+	"github.com/sthalbert/longue-vue/internal/httputil"
 )
 
 // AuditRecorder is the narrow slice of Store the middleware needs.

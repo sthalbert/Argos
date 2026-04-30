@@ -4,7 +4,7 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/sthalbert/argos/internal/httputil"
+	"github.com/sthalbert/longue-vue/internal/httputil"
 )
 
 // SecurityHeadersMiddleware sets security-related HTTP headers on every

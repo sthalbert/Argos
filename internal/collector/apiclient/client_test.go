@@ -10,8 +10,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/sthalbert/argos/internal/api"
-	"github.com/sthalbert/argos/internal/collector"
+	"github.com/sthalbert/longue-vue/internal/api"
+	"github.com/sthalbert/longue-vue/internal/collector"
 )
 
 // Compile-time check: Store satisfies collector.CmdbStore.

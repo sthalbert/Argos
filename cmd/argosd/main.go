@@ -19,17 +19,17 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sthalbert/argos/internal/api"
-	"github.com/sthalbert/argos/internal/auth"
-	"github.com/sthalbert/argos/internal/collector"
-	"github.com/sthalbert/argos/internal/eol"
-	"github.com/sthalbert/argos/internal/httputil"
-	"github.com/sthalbert/argos/internal/impact"
-	argmcp "github.com/sthalbert/argos/internal/mcp"
-	"github.com/sthalbert/argos/internal/metrics"
-	"github.com/sthalbert/argos/internal/secrets"
-	"github.com/sthalbert/argos/internal/store"
-	"github.com/sthalbert/argos/ui"
+	"github.com/sthalbert/longue-vue/internal/api"
+	"github.com/sthalbert/longue-vue/internal/auth"
+	"github.com/sthalbert/longue-vue/internal/collector"
+	"github.com/sthalbert/longue-vue/internal/eol"
+	"github.com/sthalbert/longue-vue/internal/httputil"
+	"github.com/sthalbert/longue-vue/internal/impact"
+	argmcp "github.com/sthalbert/longue-vue/internal/mcp"
+	"github.com/sthalbert/longue-vue/internal/metrics"
+	"github.com/sthalbert/longue-vue/internal/secrets"
+	"github.com/sthalbert/longue-vue/internal/store"
+	"github.com/sthalbert/longue-vue/ui"
 )
 
 // version is set at build time via -ldflags.

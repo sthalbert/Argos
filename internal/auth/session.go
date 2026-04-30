@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/sthalbert/argos/internal/httputil"
+	"github.com/sthalbert/longue-vue/internal/httputil"
 )
 
 // SessionCookieName is the fixed cookie key both the API sets and the

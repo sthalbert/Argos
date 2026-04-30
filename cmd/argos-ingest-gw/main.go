@@ -24,7 +24,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sthalbert/argos/internal/ingestgw"
+	"github.com/sthalbert/longue-vue/internal/ingestgw"
 )
 
 // Build-time identity, set via -ldflags.

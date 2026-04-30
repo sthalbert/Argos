@@ -14,7 +14,7 @@ package filter
 import (
 	"strings"
 
-	"github.com/sthalbert/argos/internal/vmcollector/provider"
+	"github.com/sthalbert/longue-vue/internal/vmcollector/provider"
 )
 
 const (

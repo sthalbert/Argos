@@ -14,8 +14,8 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"github.com/sthalbert/argos/internal/api"
-	"github.com/sthalbert/argos/internal/impact"
+	"github.com/sthalbert/longue-vue/internal/api"
+	"github.com/sthalbert/longue-vue/internal/impact"
 )
 
 // errDisabled is returned to MCP clients when the administrator has

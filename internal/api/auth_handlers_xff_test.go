@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/sthalbert/argos/internal/auth"
+	"github.com/sthalbert/longue-vue/internal/auth"
 )
 
 // TestServerClientIP_PentestReproducer exercises the AUTH-VULN-04

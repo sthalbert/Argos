@@ -16,7 +16,7 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"github.com/sthalbert/argos/internal/auth"
+	"github.com/sthalbert/longue-vue/internal/auth"
 )
 
 // oidcStub builds an OIDCProvider with a stub oauth2 endpoint for

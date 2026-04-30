@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/sthalbert/argos/internal/secrets"
+	"github.com/sthalbert/longue-vue/internal/secrets"
 )
 
 // VMApplication is one entry in a virtual machine's `applications` JSONB

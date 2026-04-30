@@ -14,7 +14,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/sthalbert/argos/internal/auth"
+	"github.com/sthalbert/longue-vue/internal/auth"
 )
 
 // IngestRoutes is the canonical, hardcoded list of (method, path) pairs the

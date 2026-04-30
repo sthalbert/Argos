@@ -13,9 +13,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/mark3labs/mcp-go/mcp"
 
-	"github.com/sthalbert/argos/internal/api"
-	"github.com/sthalbert/argos/internal/impact"
-	"github.com/sthalbert/argos/internal/metrics"
+	"github.com/sthalbert/longue-vue/internal/api"
+	"github.com/sthalbert/longue-vue/internal/impact"
+	"github.com/sthalbert/longue-vue/internal/metrics"
 )
 
 var errRequiredField = errors.New("required field missing")

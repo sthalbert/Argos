@@ -7,8 +7,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/sthalbert/argos/internal/auth"
-	"github.com/sthalbert/argos/internal/secrets"
+	"github.com/sthalbert/longue-vue/internal/auth"
+	"github.com/sthalbert/longue-vue/internal/secrets"
 )
 
 // Sentinel errors returned by Store implementations. Handlers translate these

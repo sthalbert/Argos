@@ -11,8 +11,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/sthalbert/argos/internal/api"
-	"github.com/sthalbert/argos/internal/metrics"
+	"github.com/sthalbert/longue-vue/internal/api"
+	"github.com/sthalbert/longue-vue/internal/metrics"
 )
 
 const annotationPrefix = "argos.io/eol."
